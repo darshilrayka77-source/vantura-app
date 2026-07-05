@@ -1,0 +1,277 @@
+{
+  "products": [
+    {
+      "id": "E1",
+      "name": "Aura Wireless Earbuds",
+      "category": "Electronics",
+      "price": 59,
+      "mrp": 79,
+      "stock": 35,
+      "rating": 4.7,
+      "hue": 12,
+      "desc": "True wireless earbuds with active noise cancelling and a 32-hour case battery. Touch controls, IPX5 sweat resistance.",
+      "variants": [
+        "Black",
+        "White",
+        "Blue"
+      ],
+      "featured": true
+    },
+    {
+      "id": "E2",
+      "name": "Pulse Smart Fitness Band",
+      "category": "Electronics",
+      "price": 45,
+      "mrp": 58,
+      "stock": 28,
+      "rating": 4.4,
+      "hue": 190,
+      "desc": "Tracks heart rate, sleep and steps with a week of battery life. Syncs to a companion app over Bluetooth.",
+      "variants": [
+        "Black",
+        "Grey"
+      ]
+    },
+    {
+      "id": "E3",
+      "name": "Nova LED Strip Lights (5M)",
+      "category": "Electronics",
+      "price": 24,
+      "mrp": 32,
+      "stock": 60,
+      "rating": 4.5,
+      "hue": 280,
+      "desc": "App-controlled RGB lighting with music sync and voice assistant support. Cuts to size, sticks to any wall.",
+      "variants": [
+        "Warm White",
+        "RGB"
+      ]
+    },
+    {
+      "id": "E4",
+      "name": "Orbit Fast Wireless Charger",
+      "category": "Electronics",
+      "price": 29,
+      "mrp": 36,
+      "stock": 40,
+      "rating": 4.3,
+      "hue": 45,
+      "desc": "15W fast charging pad compatible with most phone cases. Slim aluminum body with a soft-glow LED ring.",
+      "variants": [
+        "Black",
+        "White"
+      ]
+    },
+    {
+      "id": "W1",
+      "name": "Meridian Steel Chronograph",
+      "category": "Watches",
+      "price": 89,
+      "mrp": 120,
+      "stock": 16,
+      "rating": 4.8,
+      "hue": 220,
+      "desc": "A stainless-steel chronograph with sapphire-coated glass and a fold-over clasp. Water resistant to 50m.",
+      "variants": [
+        "Silver",
+        "Black",
+        "Gold"
+      ],
+      "featured": true
+    },
+    {
+      "id": "W2",
+      "name": "Lumen Minimalist Watch",
+      "category": "Watches",
+      "price": 69,
+      "mrp": 85,
+      "stock": 22,
+      "rating": 4.6,
+      "hue": 30,
+      "desc": "A clean-dial watch with a genuine leather strap, built for everyday wear from desk to dinner.",
+      "variants": [
+        "Tan",
+        "Black"
+      ]
+    },
+    {
+      "id": "W3",
+      "name": "Pulse X Smartwatch",
+      "category": "Watches",
+      "price": 99,
+      "mrp": 129,
+      "stock": 18,
+      "rating": 4.5,
+      "hue": 200,
+      "desc": "Full-color touchscreen smartwatch with call notifications, GPS tracking and 10-day battery life.",
+      "variants": [
+        "Black",
+        "Silver"
+      ],
+      "featured": true
+    },
+    {
+      "id": "W4",
+      "name": "Aria Rose Gold Bracelet Watch",
+      "category": "Watches",
+      "price": 75,
+      "mrp": 95,
+      "stock": 14,
+      "rating": 4.6,
+      "hue": 340,
+      "desc": "A slim bracelet-style watch in rose gold plating with a mother-of-pearl dial face.",
+      "variants": [
+        "Rose Gold",
+        "Silver"
+      ]
+    },
+    {
+      "id": "H1",
+      "name": "Halo LED Moon Lamp",
+      "category": "Home Decor",
+      "price": 34,
+      "mrp": 42,
+      "stock": 30,
+      "rating": 4.7,
+      "hue": 260,
+      "desc": "A 3D-printed moon replica lamp with 16 color modes and touch dimming. Runs on USB-C, no cords required at night.",
+      "variants": [
+        "10cm",
+        "15cm"
+      ],
+      "featured": true
+    },
+    {
+      "id": "H2",
+      "name": "Terra Ceramic Vase Set (3pc)",
+      "category": "Home Decor",
+      "price": 42,
+      "mrp": 52,
+      "stock": 20,
+      "rating": 4.5,
+      "hue": 25,
+      "desc": "A trio of hand-glazed ceramic vases in graduated sizes, built to anchor a shelf or console table.",
+      "variants": [
+        "Sand",
+        "Sage"
+      ]
+    },
+    {
+      "id": "H3",
+      "name": "Woven Macrame Wall Hanging",
+      "category": "Home Decor",
+      "price": 28,
+      "mrp": 35,
+      "stock": 25,
+      "rating": 4.4,
+      "hue": 35,
+      "desc": "Hand-knotted cotton cord wall art on a driftwood dowel. Adds texture to any bare wall in minutes.",
+      "variants": [
+        "Natural",
+        "Ivory"
+      ]
+    },
+    {
+      "id": "H4",
+      "name": "Drift Abstract Canvas Print",
+      "category": "Home Decor",
+      "price": 39,
+      "mrp": 48,
+      "stock": 18,
+      "rating": 4.3,
+      "hue": 160,
+      "desc": "Gallery-wrapped canvas print with a soft abstract wash, ready to hang out of the box.",
+      "variants": [
+        "24x36",
+        "30x40"
+      ]
+    },
+    {
+      "id": "K1",
+      "name": "Precision 6-Piece Knife Set",
+      "category": "Kitchen",
+      "price": 54,
+      "mrp": 70,
+      "stock": 24,
+      "rating": 4.8,
+      "hue": 8,
+      "desc": "Forged high-carbon steel knives with a walnut block. Holds an edge through daily prep work.",
+      "variants": [
+        "Standard"
+      ],
+      "featured": true
+    },
+    {
+      "id": "K2",
+      "name": "Frotha Electric Milk Frother",
+      "category": "Kitchen",
+      "price": 22,
+      "mrp": 28,
+      "stock": 45,
+      "rating": 4.4,
+      "hue": 40,
+      "desc": "Hand-held frother that turns milk into café-style foam in under 30 seconds. USB-C rechargeable.",
+      "variants": [
+        "Black",
+        "White"
+      ]
+    },
+    {
+      "id": "K3",
+      "name": "Grove Bamboo Cutting Board Set",
+      "category": "Kitchen",
+      "price": 32,
+      "mrp": 40,
+      "stock": 30,
+      "rating": 4.6,
+      "hue": 90,
+      "desc": "Three sustainably-sourced bamboo boards with juice grooves, sized for prep, serving and everyday use.",
+      "variants": [
+        "Set of 3"
+      ]
+    },
+    {
+      "id": "K4",
+      "name": "Flex Silicone Utensil Set (10pc)",
+      "category": "Kitchen",
+      "price": 26,
+      "mrp": 33,
+      "stock": 38,
+      "rating": 4.3,
+      "hue": 150,
+      "desc": "Heat-resistant silicone utensils on beechwood handles, safe for non-stick cookware up to 450°F.",
+      "variants": [
+        "Grey",
+        "Terracotta"
+      ]
+    }
+  ],
+  "coupons": [
+    {
+      "code": "VANTURA10",
+      "type": "percent",
+      "value": 10,
+      "minOrder": 0,
+      "active": true,
+      "desc": "10% off your order"
+    },
+    {
+      "code": "FREESHIP",
+      "type": "shipping",
+      "value": 0,
+      "minOrder": 0,
+      "active": true,
+      "desc": "Free standard shipping"
+    },
+    {
+      "code": "SAVE20",
+      "type": "flat",
+      "value": 20,
+      "minOrder": 120,
+      "active": true,
+      "desc": "$20 off orders over $120"
+    }
+  ],
+  "orders": [],
+  "customers": []
+}

@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VANTURA — Smart Finds, Delivered</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+:root{
+  --bg:#101114;
+  --surface:#17181D;
+  --surface-2:#1D1F26;
+  --surface-3:#252833;
+  --ink:#F4F5F7;
+  --ink-dim:#9497A6;
+  --accent:#FF5A3C;
+  --accent-ink:#2B0900;
+  --gold:#E8B84B;
+  --green:#2FA88A;
+  --line:rgba(244,245,247,.10);
+  --danger:#E5484D;
+  --ok:#2FA88A;
+  --radius:3px;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:'Inter',sans-serif;
+  line-height:1.5;
+  background-image:
+    radial-gradient(circle at 88% -10%, rgba(255,90,60,.10) 0%, transparent 42%),
+    radial-gradient(circle at -5% 45%, rgba(47,168,138,.09) 0%, transparent 35%);
+}
+h1,h2,h3,h4{font-family:'Space Grotesk',sans-serif; font-weight:600; letter-spacing:-.01em;}
+.mono{font-family:'IBM Plex Mono',monospace;}
+a{color:inherit; text-decoration:none;}
+button{font-family:inherit; cursor:pointer;}
+img,svg{display:block;}
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px;}
+.eyebrow{font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent);}
+
+/* ---------- barcode divider (signature motif) ---------- */
+.topo-divider{height:20px; width:100%; background-repeat:repeat-x; background-size:64px 20px; opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='20' viewBox='0 0 64 20'%3E%3Crect x='0' y='4' width='2' height='12' fill='%23FF5A3C'/%3E%3Crect x='5' y='4' width='1' height='12' fill='%239497A6'/%3E%3Crect x='9' y='4' width='3' height='12' fill='%239497A6'/%3E%3Crect x='15' y='4' width='1' height='12' fill='%23E8B84B'/%3E%3Crect x='19' y='4' width='2' height='12' fill='%239497A6'/%3E%3Crect x='24' y='4' width='1' height='12' fill='%239497A6'/%3E%3Crect x='28' y='4' width='2' height='12' fill='%23FF5A3C'/%3E%3Crect x='33' y='4' width='1' height='12' fill='%239497A6'/%3E%3Crect x='37' y='4' width='3' height='12' fill='%239497A6'/%3E%3Crect x='43' y='4' width='1' height='12' fill='%23E8B84B'/%3E%3Crect x='47' y='4' width='2' height='12' fill='%239497A6'/%3E%3Crect x='52' y='4' width='1' height='12' fill='%239497A6'/%3E%3Crect x='56' y='4' width='2' height='12' fill='%239497A6'/%3E%3Crect x='61' y='4' width='1' height='12' fill='%23FF5A3C'/%3E%3C/svg%3E");
+}
+
+/* ---------- header ---------- */
+header.site{position:sticky; top:0; z-index:50; background:rgba(18,25,21,.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--line);}
+.headbar{display:flex; align-items:center; gap:28px; padding:16px 24px; max-width:1180px; margin:0 auto;}
+.logo{font-family:'Fjalla One'; font-size:22px; letter-spacing:.06em; display:flex; align-items:center; gap:8px; cursor:pointer;}
+.logo .mark{color:var(--accent);}
+nav.mainnav{display:flex; gap:22px; font-size:13px; letter-spacing:.05em; text-transform:uppercase;}
+nav.mainnav a{color:var(--ink-dim); padding:6px 0; border-bottom:2px solid transparent; transition:.15s;}
+nav.mainnav a:hover, nav.mainnav a.active{color:var(--ink); border-color:var(--accent);}
+.searchbox{flex:1; max-width:340px; display:flex; align-items:center; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:0 10px;}
+.searchbox input{flex:1; background:transparent; border:0; outline:0; color:var(--ink); padding:9px 6px; font-size:13px;}
+.headicons{display:flex; align-items:center; gap:16px; margin-left:auto;}
+.icon-btn{position:relative; background:none; border:0; color:var(--ink); padding:6px;}
+.cart-badge{position:absolute; top:-2px; right:-4px; background:var(--accent); color:var(--accent-ink); font-family:'IBM Plex Mono'; font-size:10px; font-weight:700; border-radius:50%; width:16px; height:16px; display:flex; align-items:center; justify-content:center;}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:12px 22px; border-radius:var(--radius); border:1px solid transparent; font-size:13px; letter-spacing:.06em; text-transform:uppercase; font-weight:600; transition:.15s;}
+.btn-primary{background:var(--accent); color:var(--accent-ink);}
+.btn-primary:hover{background:#f07430;}
+.btn-outline{border-color:var(--line); color:var(--ink); background:transparent;}
+.btn-outline:hover{border-color:var(--ink);}
+.btn-ghost{background:transparent; color:var(--ink-dim); border:0; text-transform:none; letter-spacing:0; padding:6px 8px;}
+.btn-ghost:hover{color:var(--ink);}
+.btn-danger{background:transparent; border:1px solid var(--danger); color:#e8836f;}
+.btn-sm{padding:7px 12px; font-size:11px;}
+.btn:disabled{opacity:.4; cursor:not-allowed;}
+
+/* ---------- hero ---------- */
+.hero{padding:70px 24px 50px; position:relative; overflow:hidden;}
+.hero-inner{max-width:1180px; margin:0 auto; display:grid; grid-template-columns:1.1fr .9fr; gap:40px; align-items:center;}
+.hero h1{font-size:56px; line-height:.98; margin:14px 0 18px;}
+.hero p{color:var(--ink-dim); max-width:440px; margin-bottom:28px; font-size:15px;}
+.hero-actions{display:flex; gap:14px;}
+.hero-visual{aspect-ratio:1/1; border-radius:var(--radius); position:relative; background:linear-gradient(155deg,var(--surface-3),var(--surface)); border:1px solid var(--line); display:flex; align-items:center; justify-content:center;}
+.hero-visual svg{width:55%; height:55%; color:var(--accent);}
+.elev-tag{position:absolute; font-family:'IBM Plex Mono'; font-size:11px; color:var(--gold); border:1px solid var(--gold); padding:3px 8px; border-radius:20px;}
+.elev-tag.a{top:14px; left:14px;} .elev-tag.b{bottom:14px; right:14px;}
+
+/* ---------- sections ---------- */
+.section{padding:54px 24px;}
+.section-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:26px; flex-wrap:wrap; gap:10px;}
+.section-head h2{font-size:30px;}
+
+/* ---------- product grid/card ---------- */
+.grid{display:grid; grid-template-columns:repeat(4,1fr); gap:18px;}
+.card{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; cursor:pointer; transition:.15s; display:flex; flex-direction:column;}
+.card:hover{border-color:var(--accent); transform:translateY(-2px);}
+.card-media{aspect-ratio:1/1; display:flex; align-items:center; justify-content:center; position:relative;}
+.card-media svg{width:44%; height:44%;}
+.card-body{padding:14px 14px 16px; display:flex; flex-direction:column; gap:4px; flex:1;}
+.card-cat{font-family:'IBM Plex Mono'; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim);}
+.card-name{font-size:15px; font-weight:600;}
+.card-price{margin-top:auto; display:flex; align-items:center; gap:8px; padding-top:8px;}
+.price-now{font-family:'IBM Plex Mono'; font-weight:700; color:var(--ink);}
+.price-mrp{font-family:'IBM Plex Mono'; font-size:12px; color:var(--ink-dim); text-decoration:line-through;}
+.badge{position:absolute; top:10px; left:10px; background:var(--accent); color:var(--accent-ink); font-family:'IBM Plex Mono'; font-size:10px; padding:3px 7px; border-radius:2px; text-transform:uppercase;}
+.badge.low{background:var(--danger); color:#fff;}
+.stars{color:var(--gold); font-size:12px;}
+
+/* ---------- shop layout ---------- */
+.shop-layout{display:grid; grid-template-columns:220px 1fr; gap:32px;}
+.filters{border-right:1px solid var(--line); padding-right:24px;}
+.filter-group{margin-bottom:26px;}
+.filter-group h4{font-size:12px; color:var(--ink-dim); margin-bottom:10px; letter-spacing:.08em;}
+.filter-opt{display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 0; color:var(--ink-dim); cursor:pointer;}
+.filter-opt.active{color:var(--accent);}
+.filter-opt input{accent-color:var(--accent);}
+select,input[type=text],input[type=email],input[type=tel],input[type=number],textarea{
+  width:100%; background:var(--surface-2); border:1px solid var(--line); color:var(--ink); padding:10px 12px; border-radius:var(--radius); font-family:inherit; font-size:13px; outline:0;
+}
+select:focus,input:focus,textarea:focus{border-color:var(--accent);}
+input[type=range]{accent-color:var(--accent); width:100%;}
+
+/* ---------- product detail ---------- */
+.pd-layout{display:grid; grid-template-columns:1fr 1fr; gap:48px;}
+.pd-media{aspect-ratio:1/1; background:linear-gradient(155deg,var(--surface-3),var(--surface)); border:1px solid var(--line); border-radius:var(--radius); display:flex; align-items:center; justify-content:center;}
+.pd-media svg{width:38%; height:38%;}
+.pd-title{font-size:34px; margin:10px 0 8px;}
+.pd-price{font-family:'IBM Plex Mono'; font-size:24px; margin:14px 0;}
+.pd-desc{color:var(--ink-dim); font-size:14px; margin-bottom:20px; max-width:440px;}
+.qty-row{display:flex; align-items:center; gap:14px; margin:20px 0;}
+.qty-ctrl{display:flex; align-items:center; border:1px solid var(--line); border-radius:var(--radius);}
+.qty-ctrl button{background:none; border:0; color:var(--ink); width:34px; height:34px; font-size:16px;}
+.qty-ctrl span{width:32px; text-align:center; font-family:'IBM Plex Mono';}
+.variant-row{display:flex; gap:8px; margin:14px 0;}
+.chip{border:1px solid var(--line); padding:7px 14px; border-radius:20px; font-size:12px; cursor:pointer; color:var(--ink-dim);}
+.chip.active{border-color:var(--accent); color:var(--accent);}
+.spec-line{display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--line); font-size:13px; color:var(--ink-dim);}
+
+/* ---------- cart ---------- */
+.cart-layout{display:grid; grid-template-columns:1fr 340px; gap:36px; align-items:start;}
+.cart-row{display:grid; grid-template-columns:64px 1fr auto auto auto; gap:16px; align-items:center; padding:16px 0; border-bottom:1px solid var(--line);}
+.cart-thumb{width:64px; height:64px; border-radius:var(--radius); background:var(--surface-2); display:flex; align-items:center; justify-content:center;}
+.cart-thumb svg{width:60%; height:60%;}
+.summary-box{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:22px;}
+.summary-line{display:flex; justify-content:space-between; font-size:13px; padding:8px 0; color:var(--ink-dim);}
+.summary-line.total{color:var(--ink); font-size:17px; font-family:'IBM Plex Mono'; border-top:1px solid var(--line); padding-top:14px; margin-top:6px;}
+.coupon-row{display:flex; gap:8px; margin:16px 0;}
+.empty-state{padding:80px 20px; text-align:center; color:var(--ink-dim);}
+.empty-state svg{width:60px; height:60px; margin:0 auto 18px; color:var(--green);}
+
+/* ---------- checkout ---------- */
+.co-layout{display:grid; grid-template-columns:1fr 340px; gap:36px; align-items:start;}
+.form-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+.field{margin-bottom:14px;}
+.field label{display:block; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:6px;}
+.pay-opt{border:1px solid var(--line); border-radius:var(--radius); padding:14px; margin-bottom:10px; cursor:pointer;}
+.pay-opt.active{border-color:var(--accent); background:rgba(255,90,60,.06);}
+.pay-opt-head{display:flex; align-items:center; gap:10px; font-weight:600; font-size:14px;}
+
+/* ---------- trail progress (order status signature) ---------- */
+.trail{display:flex; align-items:flex-start; justify-content:space-between; position:relative; margin:34px 0 10px; padding:0 4px;}
+.trail::before{content:''; position:absolute; top:9px; left:20px; right:20px; height:2px; background:repeating-linear-gradient(90deg,var(--line) 0 6px, transparent 6px 12px);}
+.trail-step{flex:1; text-align:center; position:relative; z-index:1;}
+.trail-dot{width:20px; height:20px; border-radius:50%; background:var(--surface); border:2px solid var(--line); margin:0 auto 10px;}
+.trail-step.done .trail-dot{background:var(--green); border-color:var(--green);}
+.trail-step.current .trail-dot{background:var(--accent); border-color:var(--accent); box-shadow:0 0 0 4px rgba(255,90,60,.2);}
+.trail-step .lbl{font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.05em;}
+.trail-step.done .lbl,.trail-step.current .lbl{color:var(--ink);}
+
+/* ---------- tables ---------- */
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{text-align:left; font-family:'IBM Plex Mono'; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim); padding:10px 12px; border-bottom:1px solid var(--line);}
+td{padding:12px; border-bottom:1px solid var(--line); vertical-align:middle;}
+tr:hover td{background:rgba(255,255,255,.02);}
+.status-pill{font-family:'IBM Plex Mono'; font-size:10px; padding:4px 9px; border-radius:20px; text-transform:uppercase; display:inline-block;}
+.status-Processing{background:rgba(201,162,39,.15); color:var(--gold);}
+.status-Shipped{background:rgba(79,122,91,.2); color:#8ec99a;}
+.status-Out-for-Delivery{background:rgba(255,90,60,.15); color:var(--accent);}
+.status-Delivered{background:rgba(92,148,99,.2); color:var(--ok);}
+.status-Cancelled{background:rgba(196,72,47,.18); color:#e8836f;}
+
+/* ---------- admin ---------- */
+.admin-shell{display:grid; grid-template-columns:220px 1fr; min-height:calc(100vh - 60px);}
+.admin-side{border-right:1px solid var(--line); padding:24px 0;}
+.admin-side a{display:block; padding:11px 24px; font-size:13px; color:var(--ink-dim); border-left:2px solid transparent;}
+.admin-side a.active{color:var(--ink); border-color:var(--accent); background:rgba(255,90,60,.06);}
+.admin-main{padding:28px 32px;}
+.kpi-row{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:30px;}
+.kpi{background:var(--surface); border:1px solid var(--line); padding:18px; border-radius:var(--radius);}
+.kpi .eyebrow{display:block; margin-bottom:8px;}
+.kpi .val{font-family:'IBM Plex Mono'; font-size:26px;}
+.kpi .delta{font-size:11px; color:var(--ok); margin-top:6px;}
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:22px; margin-bottom:24px;}
+.panel h3{font-size:16px; margin-bottom:16px;}
+.bar-chart{display:flex; align-items:flex-end; gap:10px; height:160px; padding-top:10px;}
+.bar-col{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;}
+.bar{width:100%; background:linear-gradient(180deg,var(--accent),var(--gold)); border-radius:2px 2px 0 0; position:relative;}
+.bar-label{font-size:10px; color:var(--ink-dim); margin-top:8px; font-family:'IBM Plex Mono';}
+.toolbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; gap:12px;}
+.admin-login-box{max-width:360px; margin:90px auto; background:var(--surface); border:1px solid var(--line); padding:32px; border-radius:var(--radius);}
+
+/* ---------- modal ---------- */
+.modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px;}
+.modal{background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); width:100%; max-width:520px; max-height:88vh; overflow-y:auto; padding:26px;}
+.modal h3{margin-bottom:18px;}
+
+/* ---------- invoice ---------- */
+.invoice-sheet{background:#fff; color:#161B14; max-width:720px; margin:30px auto; padding:44px; border-radius:2px;}
+.invoice-sheet h1,.invoice-sheet h2,.invoice-sheet h3{color:#161B14;}
+.inv-head{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #E0661E; padding-bottom:18px; margin-bottom:24px;}
+.inv-head .logo2{font-family:'Fjalla One'; font-size:22px;}
+.inv-meta{text-align:right; font-family:'IBM Plex Mono'; font-size:12px; color:#555;}
+.inv-table{width:100%; border-collapse:collapse; margin:18px 0;}
+.inv-table th{background:#F2EFE6; text-transform:uppercase; font-size:11px; padding:8px 10px; text-align:left;}
+.inv-table td{padding:8px 10px; border-bottom:1px solid #eee; font-size:13px;}
+.inv-totals{margin-left:auto; width:260px; margin-top:10px;}
+.inv-totals div{display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
+.inv-totals .grand{font-weight:700; font-size:16px; border-top:2px solid #161B14; padding-top:8px; margin-top:6px;}
+
+/* ---------- toast ---------- */
+.toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:var(--surface-3); border:1px solid var(--accent); color:var(--ink); padding:12px 20px; border-radius:4px; font-size:13px; z-index:500; display:flex; align-items:center; gap:10px;}
+
+/* ---------- footer ---------- */
+footer.site{border-top:1px solid var(--line); padding:40px 24px; margin-top:40px;}
+.foot-grid{max-width:1180px; margin:0 auto; display:grid; grid-template-columns:1.4fr 1fr 1fr 1fr; gap:30px; font-size:13px; color:var(--ink-dim);}
+.foot-grid h4{color:var(--ink); font-size:12px; margin-bottom:12px; letter-spacing:.08em;}
+.foot-grid a{display:block; padding:4px 0;}
+
+@media(max-width:900px){
+  .hero-inner,.pd-layout,.cart-layout,.co-layout,.shop-layout,.admin-shell{grid-template-columns:1fr;}
+  .grid{grid-template-columns:repeat(2,1fr);}
+  .kpi-row{grid-template-columns:repeat(2,1fr);}
+  .foot-grid{grid-template-columns:1fr 1fr;}
+  nav.mainnav{display:none;}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================================================
+   ICONS (hand-drawn line icons, one per category)
+============================================================ */
+const ICONS = {
+  Electronics: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="14" width="32" height="20" rx="3"/><path d="M17 34v5h14v-5"/><circle cx="24" cy="24" r="5"/><path d="M24 21v6M21 24h6"/></svg>`,
+  Watches: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="24" cy="24" r="11"/><path d="M24 18v6l4 3"/><path d="M18 6h12l-1.5 8h-9zM18 42h12l-1.5-8h-9z"/></svg>`,
+  "Home Decor": `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 30c-4-6-4-12 0-18 4 6 8 6 12 0 4 6 4 12 0 18z"/><path d="M24 30v12M17 42h14"/></svg>`,
+  Kitchen: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 6v14a4 4 0 0 0 4 4v18"/><path d="M14 6v10M18 6v10"/><path d="M32 6c-4 0-6 4-6 9s2 9 6 9v18"/></svg>`
+};
+const HERO_ICON = `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M24 5 41 14v18L24 41 7 32V14z"/><path d="M7 14l17 9 17-9M24 23v18"/></svg>`;
+
+/* ============================================================
+   DATA
+============================================================ */
+let uidCounter = 1000;
+const uid = (p='ID') => p + (uidCounter++);
+
+const API = '/api';
+let authToken = null;
+
+const DB = {
+  products: [],
+  coupons: [],
+  orders: [],
+  customers: [],
+};
+
+async function apiFetch(path, opts={}){
+  const headers = {'Content-Type':'application/json', ...(opts.headers||{})};
+  if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  const res = await fetch(API + path, {...opts, headers});
+  let data = null;
+  try { data = await res.json(); } catch(e){ /* no body */ }
+  if(!res.ok){ throw new Error((data && data.message) || ('Request failed (' + res.status + ')')); }
+  return data;
+}
+
+function mergeOrders(list){
+  list.forEach(o=>{
+    const idx = DB.orders.findIndex(x=>x.id===o.id);
+    if(idx>=0) DB.orders[idx]=o; else DB.orders.unshift(o);
+  });
+}
+
+async function loadCatalog(){
+  document.getElementById('app').innerHTML = `<div style="padding:120px 20px; text-align:center; color:var(--ink-dim); font-family:'Inter',sans-serif;">Loading Vantura…</div>`;
+  try{
+    const [products, coupons] = await Promise.all([
+      apiFetch('/products'),
+      apiFetch('/coupons'),
+    ]);
+    DB.products = products;
+    DB.coupons = coupons;
+    render();
+  } catch(err){
+    document.getElementById('app').innerHTML = `
+      <div style="max-width:480px; margin:100px auto; text-align:center; font-family:'Inter',sans-serif; color:var(--ink); padding:0 20px;">
+        <h2 style="font-family:'Space Grotesk'; margin-bottom:12px;">Can't reach the server</h2>
+        <p style="color:var(--ink-dim); font-size:14px; margin-bottom:18px;">Make sure the backend is running: <span class="mono" style="background:var(--surface-2); padding:2px 6px; border-radius:3px;">node server.js</span></p>
+        <button class="btn btn-primary" onclick="loadCatalog()">Retry</button>
+      </div>`;
+  }
+}
+
+/* ============================================================
+   STATE
+============================================================ */
+const state = {
+  view:'home',
+  productId:null,
+  cart:[],           // {id, variant, qty}
+  filters:{category:'All', sort:'featured', maxPrice:400, query:''},
+  coupon:null,
+  lastOrderId:null,
+  myOrdersEmail:'',
+  myOrdersResults:[],
+  myOrdersSearched:false,
+  isAdmin:false,
+  adminView:'dashboard',
+  modal:null,        // {type:'product'|'coupon', data:{...}}
+  toast:null,
+};
+
+function nav(view, extra={}){ Object.assign(state, {view}, extra); window.scrollTo(0,0); render(); }
+function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
+const fmt = n => '$' + n.toFixed(2);
+const findProduct = id => DB.products.find(p=>p.id===id);
+
+/* ============================================================
+   CART LOGIC
+============================================================ */
+function addToCart(id, variant, qty){
+  qty = qty||1;
+  const existing = state.cart.find(c=>c.id===id && c.variant===variant);
+  if(existing){ existing.qty += qty; } else { state.cart.push({id,variant,qty}); }
+  showToast('Added to cart — ' + findProduct(id).name);
+}
+function updateCartQty(id, variant, delta){
+  const row = state.cart.find(c=>c.id===id && c.variant===variant);
+  if(!row) return;
+  row.qty += delta;
+  if(row.qty<=0) state.cart = state.cart.filter(c=>c!==row);
+  render();
+}
+function removeFromCart(id, variant){ state.cart = state.cart.filter(c=>!(c.id===id && c.variant===variant)); render(); }
+function cartCount(){ return state.cart.reduce((s,c)=>s+c.qty,0); }
+function cartLines(){ return state.cart.map(c=>({...c, product:findProduct(c.id)})); }
+function cartSubtotal(){ return cartLines().reduce((s,l)=>s+l.product.price*l.qty,0); }
+
+function applyCoupon(codeRaw){
+  const code = (codeRaw||'').trim().toUpperCase();
+  const coup = DB.coupons.find(c=>c.code===code && c.active);
+  const subtotal = cartSubtotal();
+  if(!coup){ showToast('Invalid or expired coupon code'); return; }
+  if(subtotal < coup.minOrder){ showToast(`Needs a minimum order of ${fmt(coup.minOrder)}`); return; }
+  state.coupon = coup;
+  showToast('Coupon applied — ' + coup.desc);
+  render();
+}
+function removeCoupon(){ state.coupon=null; render(); }
+
+function calcTotals(){
+  const subtotal = cartSubtotal();
+  let discount = 0, freeShip=false;
+  if(state.coupon){
+    if(state.coupon.type==='percent') discount = subtotal*state.coupon.value/100;
+    if(state.coupon.type==='flat') discount = state.coupon.value;
+    if(state.coupon.type==='shipping') freeShip = true;
+  }
+  discount = Math.min(discount, subtotal);
+  let shipping = subtotal>75 || freeShip || subtotal===0 ? 0 : 5.99;
+  const tax = +((subtotal-discount)*0.08).toFixed(2);
+  const total = +(subtotal - discount + shipping + tax).toFixed(2);
+  return {subtotal:+subtotal.toFixed(2), discount:+discount.toFixed(2), shipping:+shipping.toFixed(2), tax, total};
+}
+
+/* ============================================================
+   CHECKOUT / ORDERS
+============================================================ */
+const checkoutForm = {name:'',email:'',phone:'',line1:'',city:'',state:'',zip:'',country:'USA',payment:'Card',cardNum:'',upiId:''};
+
+async function placeOrder(){
+  if(!checkoutForm.name || !checkoutForm.email || !checkoutForm.line1 || !checkoutForm.city || !checkoutForm.zip){
+    showToast('Please fill in all required shipping fields'); return;
+  }
+  if(state.cart.length===0){ showToast('Your cart is empty'); return; }
+
+  const payload = {
+    items: state.cart.map(c=>({id:c.id, qty:c.qty, variant:c.variant})),
+    customer: {name:checkoutForm.name, email:checkoutForm.email, phone:checkoutForm.phone},
+    address: {line1:checkoutForm.line1, city:checkoutForm.city, state:checkoutForm.state, zip:checkoutForm.zip, country:checkoutForm.country},
+    payment: checkoutForm.payment,
+    couponCode: state.coupon ? state.coupon.code : null,
+  };
+
+  const placeBtn = document.getElementById('placeOrderBtn');
+  if(placeBtn){ placeBtn.disabled = true; placeBtn.textContent = 'Placing Order…'; }
+  try{
+    const order = await apiFetch('/orders', {method:'POST', body:JSON.stringify(payload)});
+    mergeOrders([order]);
+    // refresh product stock levels shown in the storefront
+    DB.products = await apiFetch('/products');
+    state.cart = []; state.coupon = null; state.lastOrderId = order.id;
+    nav('confirmation');
+  } catch(err){
+    showToast(err.message || 'Could not place order');
+    if(placeBtn){ placeBtn.disabled = false; placeBtn.textContent = 'Place Order'; }
+  }
+}
+
+async function updateOrderStatus(orderId, status){
+  try{
+    const order = await apiFetch('/orders/' + orderId, {method:'PATCH', body:JSON.stringify({status})});
+    mergeOrders([order]);
+    render();
+  } catch(err){ showToast(err.message || 'Could not update order status'); render(); }
+}
+
+/* ============================================================
+   ADMIN: PRODUCT / COUPON CRUD
+============================================================ */
+function openProductModal(id){
+  const data = id ? {...findProduct(id)} : {id:null,name:'',category:'Electronics',price:0,mrp:0,stock:0,rating:4.5,hue:20,desc:'',variants:['One Size'],featured:false};
+  state.modal = {type:'product', data};
+  render();
+}
+async function saveProductModal(){
+  const d = state.modal.data;
+  if(!d.name || !d.price){ showToast('Name and price are required'); return; }
+  const payload = {
+    name:d.name, category:d.category, price:parseFloat(d.price), mrp:parseFloat(d.mrp)||parseFloat(d.price),
+    stock:parseInt(d.stock)||0, rating:parseFloat(d.rating)||4.5, hue:parseInt(d.hue)||20, desc:d.desc,
+    variants: typeof d.variants==='string' ? d.variants.split(',').map(s=>s.trim()).filter(Boolean) : d.variants,
+    featured: !!d.featured,
+  };
+  try{
+    if(d.id){
+      await apiFetch('/products/' + d.id, {method:'PUT', body:JSON.stringify(payload)});
+      showToast('Product updated');
+    } else {
+      await apiFetch('/products', {method:'POST', body:JSON.stringify(payload)});
+      showToast('Product added');
+    }
+    DB.products = await apiFetch('/products');
+    state.modal = null; render();
+  } catch(err){ showToast(err.message || 'Could not save product'); }
+}
+async function deleteProduct(id){
+  if(!confirm('Remove this product from the catalog?')) return;
+  try{
+    await apiFetch('/products/' + id, {method:'DELETE'});
+    DB.products = DB.products.filter(p=>p.id!==id);
+    showToast('Product removed'); render();
+  } catch(err){ showToast(err.message || 'Could not remove product'); }
+}
+function openCouponModal(code){
+  const data = code ? {...DB.coupons.find(c=>c.code===code)} : {code:'',type:'percent',value:10,minOrder:0,active:true,desc:'', _isNew:true};
+  state.modal = {type:'coupon', data};
+  render();
+}
+async function saveCouponModal(){
+  const d = state.modal.data;
+  if(!d.code){ showToast('Coupon code is required'); return; }
+  const payload = {code:d.code.toUpperCase(), type:d.type, value:parseFloat(d.value)||0, minOrder:parseFloat(d.minOrder)||0, active:!!d.active, desc:d.desc||''};
+  try{
+    if(d._isNew){
+      await apiFetch('/coupons', {method:'POST', body:JSON.stringify(payload)});
+    } else {
+      await apiFetch('/coupons/' + encodeURIComponent(d.code), {method:'PUT', body:JSON.stringify(payload)});
+    }
+    DB.coupons = await apiFetch('/coupons');
+    state.modal=null; showToast('Coupon saved'); render();
+  } catch(err){ showToast(err.message || 'Could not save coupon'); }
+}
+async function deleteCoupon(code){
+  if(!confirm('Delete this coupon?')) return;
+  try{
+    await apiFetch('/coupons/' + encodeURIComponent(code), {method:'DELETE'});
+    DB.coupons = DB.coupons.filter(c=>c.code!==code);
+    showToast('Coupon deleted'); render();
+  } catch(err){ showToast(err.message || 'Could not delete coupon'); }
+}
+function closeModal(){ state.modal=null; render(); }
+
+/* ============================================================
+   INVOICE (PDF via jsPDF)
+============================================================ */
+function downloadInvoicePDF(orderId){
+  const o = DB.orders.find(o=>o.id===orderId);
+  if(!o) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(255,90,60);
+  doc.text('VANTURA', 14, 20);
+  doc.setTextColor(40,40,40); doc.setFontSize(10); doc.setFont('helvetica','normal');
+  doc.text('12 Market Street, Wilmington, DE 19801', 14, 26);
+  doc.text('billing@vantura.example', 14, 31);
+
+  doc.setFontSize(11); doc.setFont('helvetica','bold');
+  doc.text('INVOICE', 160, 20);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text('Order: ' + o.id, 160, 26);
+  doc.text('Date: ' + new Date(o.date).toLocaleDateString(), 160, 31);
+  doc.text('Payment: ' + o.payment, 160, 36);
+
+  doc.setDrawColor(255,90,60); doc.setLineWidth(0.8); doc.line(14,40,196,40);
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text('Bill To:', 14, 48);
+  doc.setFont('helvetica','normal');
+  doc.text(o.customer.name, 14, 54);
+  doc.text(o.customer.email, 14, 59);
+  doc.text(`${o.address.line1}, ${o.address.city}, ${o.address.state} ${o.address.zip}`, 14, 64);
+
+  const rows = o.items.map(it=>[it.name, it.variant||'-', String(it.qty), fmt(it.price), fmt(it.price*it.qty)]);
+  doc.autoTable({
+    startY:72, head:[['Item','Variant','Qty','Price','Amount']], body:rows,
+    theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3},
+  });
+  let y = doc.lastAutoTable.finalY + 10;
+  const lines = [
+    ['Subtotal', fmt(o.subtotal)],
+    ['Discount' + (o.couponCode?` (${o.couponCode})`:''), '-' + fmt(o.discount)],
+    ['Shipping', o.shipping===0?'Free':fmt(o.shipping)],
+    ['Tax (8%)', fmt(o.tax)],
+  ];
+  doc.setFontSize(9);
+  lines.forEach(([l,v])=>{ doc.text(l,140,y); doc.text(v,196,y,{align:'right'}); y+=6; });
+  doc.setDrawColor(20,20,20); doc.line(140,y,196,y); y+=6;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('Total', 140, y); doc.text(fmt(o.total), 196, y, {align:'right'});
+
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(120,120,120);
+  doc.text('Thank you for shopping with Vantura — enjoy your new find.', 14, 280);
+
+  doc.save(o.id + '-invoice.pdf');
+}
+
+/* ============================================================
+   RENDER HELPERS
+============================================================ */
+function productMedia(p, size='card'){
+  const icon = ICONS[p.category] || ICONS.Backpacks;
+  const low = p.stock>0 && p.stock<=8;
+  const out = p.stock<=0;
+  return `<div class="${size==='card'?'card-media':'pd-media'}" style="background:linear-gradient(155deg,hsl(${p.hue} 40% 22%),hsl(${p.hue} 30% 14%)); color:hsl(${p.hue} 70% 65%); position:relative;">
+    ${size==='card' ? (out?`<span class="badge low">Sold Out</span>`: low?`<span class="badge low">Low Stock</span>`: p.featured?`<span class="badge">Featured</span>`:'') : ''}
+    ${icon}
+  </div>`;
+}
+function stars(r){ const full = Math.round(r); return '★'.repeat(full)+'☆'.repeat(5-full); }
+
+function productCard(p){
+  return `<div class="card" onclick="nav('product',{productId:'${p.id}'})">
+    ${productMedia(p)}
+    <div class="card-body">
+      <span class="card-cat">${p.category}</span>
+      <span class="card-name">${p.name}</span>
+      <span class="stars">${stars(p.rating)} <span style="color:var(--ink-dim); font-size:11px;">(${p.rating})</span></span>
+      <div class="card-price">
+        <span class="price-now mono">${fmt(p.price)}</span>
+        ${p.mrp>p.price?`<span class="price-mrp">${fmt(p.mrp)}</span>`:''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function header(){
+  const link = (v,label) => `<a href="#" class="${state.view===v?'active':''}" onclick="event.preventDefault(); nav('${v}')">${label}</a>`;
+  return `
+  <header class="site">
+    <div class="headbar">
+      <div class="logo" onclick="nav('home')"><span class="mark">▣</span> VANTURA</div>
+      <nav class="mainnav">
+        ${link('home','Home')}
+        ${link('shop','Shop')}
+        ${link('collections','Collections')}
+        ${link('orders','Track Order')}
+      </nav>
+      <div class="searchbox">
+        <span class="mono" style="opacity:.5; font-size:13px;">⌕</span>
+        <input id="searchInput" type="text" placeholder="Search products..." value="${state.filters.query}" onkeydown="if(event.key==='Enter'){setFilter('query', this.value); nav('shop');}">
+      </div>
+      <div class="headicons">
+        <button class="icon-btn" title="Admin" onclick="nav('${state.isAdmin?'admin':'admin-login'}')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="3.2"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+        </button>
+        <button class="icon-btn" title="Cart" onclick="nav('cart')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9" cy="21" r="1"/><circle cx="17" cy="21" r="1"/></svg>
+          ${cartCount()>0?`<span class="cart-badge">${cartCount()}</span>`:''}
+        </button>
+      </div>
+    </div>
+    <div class="topo-divider"></div>
+  </header>`;
+}
+
+function footer(){
+  return `
+  <footer class="site">
+    <div class="foot-grid">
+      <div>
+        <div class="logo" style="margin-bottom:10px;"><span class="mark">▣</span> VANTURA</div>
+        <p style="max-width:280px;">Smart, everyday finds — sourced globally, curated closely, shipped straight to your door.</p>
+      </div>
+      <div><h4>SHOP</h4>
+        <a href="#" onclick="event.preventDefault(); setFilter('category','Electronics'); nav('shop')">Electronics</a>
+        <a href="#" onclick="event.preventDefault(); setFilter('category','Watches'); nav('shop')">Watches</a>
+        <a href="#" onclick="event.preventDefault(); setFilter('category','Home Decor'); nav('shop')">Home Decor</a>
+        <a href="#" onclick="event.preventDefault(); setFilter('category','Kitchen'); nav('shop')">Kitchen</a>
+      </div>
+      <div><h4>SUPPORT</h4>
+        <a href="#" onclick="event.preventDefault(); nav('orders')">Track an order</a>
+        <a href="#" onclick="event.preventDefault();">Shipping & returns</a>
+        <a href="#" onclick="event.preventDefault();">Size guide</a>
+      </div>
+      <div><h4>STORE</h4>
+        <a href="#" onclick="event.preventDefault(); nav('${state.isAdmin?'admin':'admin-login'}')">Owner control panel</a>
+        <a href="#">Wholesale</a>
+        <a href="#">Careers</a>
+      </div>
+    </div>
+    <div class="wrap" style="margin-top:30px; font-size:11px; color:var(--ink-dim); font-family:'IBM Plex Mono';">© 2026 VANTURA — Demo storefront, no real payments are processed.</div>
+  </footer>`;
+}
+
+function toast(){
+  return state.toast ? `<div class="toast">✓ ${state.toast}</div>` : '';
+}
+
+/* ============================================================
+   VIEWS — STOREFRONT
+============================================================ */
+function viewHome(){
+  const featured = DB.products.filter(p=>p.featured);
+  const categories = [...new Set(DB.products.map(p=>p.category))];
+  return `
+  <section class="hero">
+    <div class="hero-inner">
+      <div>
+        <span class="eyebrow">Est. 2026 · Shipped Worldwide</span>
+        <h1>Smart finds,<br>straight to your door.</h1>
+        <p>Electronics, watches, home decor and kitchen essentials — curated for everyday life and priced to actually buy.</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" onclick="nav('shop')">Shop All Products</button>
+          <button class="btn btn-outline" onclick="nav('collections')">Browse Collections</button>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <span class="elev-tag a">4.7★ AVG RATING</span>
+        ${HERO_ICON}
+        <span class="elev-tag b">7-12 DAY DELIVERY</span>
+      </div>
+    </div>
+  </section>
+  <div class="topo-divider" style="opacity:.5;"></div>
+  <section class="section wrap">
+    <div class="section-head">
+      <h2>Trending Now</h2>
+      <a href="#" onclick="event.preventDefault(); nav('shop')" style="font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent);">View all →</a>
+    </div>
+    <div class="grid">${featured.map(productCard).join('')}</div>
+  </section>
+  <section class="section wrap">
+    <div class="section-head"><h2>Shop by Collection</h2></div>
+    <div class="grid">
+      ${categories.map(c=>`
+        <div class="card" onclick="setFilter('category','${c}'); nav('shop')" style="text-align:center;">
+          <div class="card-media" style="background:var(--surface-2); color:var(--gold);">${ICONS[c]}</div>
+          <div class="card-body" style="align-items:center;"><span class="card-name">${c}</span><span class="card-cat">${DB.products.filter(p=>p.category===c).length} items</span></div>
+        </div>`).join('')}
+    </div>
+  </section>`;
+}
+
+function viewCollections(){
+  const categories = [...new Set(DB.products.map(p=>p.category))];
+  return `<section class="section wrap">
+    <div class="section-head"><h2>Collections</h2></div>
+    ${categories.map(c=>`
+      <div style="margin-bottom:44px;">
+        <div class="section-head"><h3 style="font-size:20px;">${c}</h3>
+          <a href="#" onclick="event.preventDefault(); setFilter('category','${c}'); nav('shop')" style="font-size:12px; color:var(--accent); text-transform:uppercase;">Shop ${c} →</a>
+        </div>
+        <div class="grid">${DB.products.filter(p=>p.category===c).slice(0,4).map(productCard).join('')}</div>
+      </div>
+    `).join('')}
+  </section>`;
+}
+
+function setFilter(key,val){ state.filters[key]=val; }
+
+function viewShop(){
+  const categories = ['All', ...new Set(DB.products.map(p=>p.category))];
+  let items = DB.products.filter(p=>{
+    const catOk = state.filters.category==='All' || p.category===state.filters.category;
+    const priceOk = p.price <= state.filters.maxPrice;
+    const q = state.filters.query.toLowerCase();
+    const qOk = !q || p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q);
+    return catOk && priceOk && qOk;
+  });
+  if(state.filters.sort==='price-asc') items.sort((a,b)=>a.price-b.price);
+  if(state.filters.sort==='price-desc') items.sort((a,b)=>b.price-a.price);
+  if(state.filters.sort==='rating') items.sort((a,b)=>b.rating-a.rating);
+  if(state.filters.sort==='featured') items.sort((a,b)=>(b.featured?1:0)-(a.featured?1:0));
+
+  return `<section class="section wrap">
+    <div class="section-head">
+      <h2>${state.filters.category==='All'?'All Products':state.filters.category}</h2>
+      <select style="width:180px;" onchange="setFilter('sort',this.value); render()">
+        <option value="featured" ${state.filters.sort==='featured'?'selected':''}>Sort: Featured</option>
+        <option value="price-asc" ${state.filters.sort==='price-asc'?'selected':''}>Price: Low to High</option>
+        <option value="price-desc" ${state.filters.sort==='price-desc'?'selected':''}>Price: High to Low</option>
+        <option value="rating" ${state.filters.sort==='rating'?'selected':''}>Top Rated</option>
+      </select>
+    </div>
+    <div class="shop-layout">
+      <div class="filters">
+        <div class="filter-group">
+          <h4>SEARCH</h4>
+          <input type="text" placeholder="Search..." value="${state.filters.query}" oninput="setFilter('query',this.value); render()">
+        </div>
+        <div class="filter-group">
+          <h4>CATEGORY</h4>
+          ${categories.map(c=>`<div class="filter-opt ${state.filters.category===c?'active':''}" onclick="setFilter('category','${c}'); render()">
+            <input type="radio" ${state.filters.category===c?'checked':''}> ${c}
+          </div>`).join('')}
+        </div>
+        <div class="filter-group">
+          <h4>MAX PRICE — <span class="mono">${fmt(state.filters.maxPrice)}</span></h4>
+          <input type="range" min="20" max="400" step="10" value="${state.filters.maxPrice}" oninput="setFilter('maxPrice', parseInt(this.value)); render()">
+        </div>
+      </div>
+      <div>
+        ${items.length? `<div class="grid">${items.map(productCard).join('')}</div>` :
+          `<div class="empty-state"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="21" cy="21" r="14"/><path d="M31 31l10 10"/></svg><h3 style="font-size:18px;">No products match</h3><p>Try widening your filters.</p></div>`}
+      </div>
+    </div>
+  </section>`;
+}
+
+function viewProduct(){
+  const p = findProduct(state.productId);
+  if(!p) return `<section class="section wrap"><p>Product not found.</p></section>`;
+  window.__selVariant = window.__selVariant || p.variants[0];
+  window.__selQty = window.__selQty || 1;
+  return `<section class="section wrap">
+    <div class="pd-layout">
+      ${productMedia(p,'pd')}
+      <div>
+        <span class="eyebrow">${p.category}</span>
+        <h1 class="pd-title">${p.name}</h1>
+        <span class="stars">${stars(p.rating)} <span style="color:var(--ink-dim); font-size:12px;">(${p.rating} · ${p.stock} in stock)</span></span>
+        <div class="pd-price">${fmt(p.price)} ${p.mrp>p.price?`<span class="price-mrp" style="font-size:15px;">${fmt(p.mrp)}</span>`:''}</div>
+        <p class="pd-desc">${p.desc}</p>
+
+        <div><span style="font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim);">Variant</span>
+          <div class="variant-row" id="variantRow">
+            ${p.variants.map(v=>`<span class="chip ${window.__selVariant===v?'active':''}" onclick="window.__selVariant='${v}'; render()">${v}</span>`).join('')}
+          </div>
+        </div>
+
+        <div class="qty-row">
+          <div class="qty-ctrl">
+            <button onclick="window.__selQty=Math.max(1,window.__selQty-1); render()">−</button>
+            <span>${window.__selQty}</span>
+            <button onclick="window.__selQty=window.__selQty+1; render()">+</button>
+          </div>
+          <button class="btn btn-primary" ${p.stock<=0?'disabled':''} onclick="addToCart('${p.id}', window.__selVariant, window.__selQty); window.__selQty=1;">
+            ${p.stock<=0?'Sold Out':'Add to Cart'}
+          </button>
+        </div>
+
+        <div style="margin-top:26px;">
+          <div class="spec-line"><span>Category</span><span class="mono">${p.category}</span></div>
+          <div class="spec-line"><span>SKU</span><span class="mono">${p.id}</span></div>
+          <div class="spec-line"><span>Shipping</span><span class="mono">Free over $75</span></div>
+        </div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function viewCart(){
+  const lines = cartLines();
+  const t = calcTotals();
+  if(lines.length===0){
+    return `<section class="section wrap">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9" cy="21" r="1"/><circle cx="17" cy="21" r="1"/></svg>
+        <h3 style="font-size:20px;">Your cart is empty</h3>
+        <p style="margin:10px 0 24px;">Find something worth adding.</p>
+        <button class="btn btn-primary" onclick="nav('shop')">Shop Products</button>
+      </div>
+    </section>`;
+  }
+  return `<section class="section wrap">
+    <div class="section-head"><h2>Your Cart</h2></div>
+    <div class="cart-layout">
+      <div>
+        ${lines.map(l=>`
+          <div class="cart-row">
+            <div class="cart-thumb" style="background:hsl(${l.product.hue} 35% 18%); color:hsl(${l.product.hue} 60% 60%);">${ICONS[l.product.category]}</div>
+            <div>
+              <div style="font-weight:600;">${l.product.name}</div>
+              <div class="card-cat">Variant: ${l.variant}</div>
+            </div>
+            <div class="qty-ctrl">
+              <button onclick="updateCartQty('${l.id}','${l.variant}',-1)">−</button>
+              <span>${l.qty}</span>
+              <button onclick="updateCartQty('${l.id}','${l.variant}',1)">+</button>
+            </div>
+            <div class="mono">${fmt(l.product.price*l.qty)}</div>
+            <button class="btn-ghost" onclick="removeFromCart('${l.id}','${l.variant}')">Remove</button>
+          </div>`).join('')}
+        <div style="margin-top:16px;"><a href="#" onclick="event.preventDefault(); nav('shop')" style="color:var(--accent); font-size:13px;">← Continue shopping</a></div>
+      </div>
+      <div class="summary-box">
+        <h3 style="font-size:16px; margin-bottom:16px;">Order Summary</h3>
+        <div class="coupon-row">
+          <input type="text" id="couponInput" placeholder="Coupon code" value="${state.coupon?state.coupon.code:''}">
+          ${state.coupon
+            ? `<button class="btn btn-outline btn-sm" onclick="removeCoupon()">Remove</button>`
+            : `<button class="btn btn-outline btn-sm" onclick="applyCoupon(document.getElementById('couponInput').value)">Apply</button>`}
+        </div>
+        <div style="font-size:11px; color:var(--ink-dim); margin-bottom:14px;">Try: VANTURA10 · FREESHIP · SAVE20</div>
+        <div class="summary-line"><span>Subtotal</span><span class="mono">${fmt(t.subtotal)}</span></div>
+        <div class="summary-line"><span>Discount</span><span class="mono">-${fmt(t.discount)}</span></div>
+        <div class="summary-line"><span>Shipping</span><span class="mono">${t.shipping===0?'Free':fmt(t.shipping)}</span></div>
+        <div class="summary-line"><span>Tax (8%)</span><span class="mono">${fmt(t.tax)}</span></div>
+        <div class="summary-line total"><span>Total</span><span>${fmt(t.total)}</span></div>
+        <button class="btn btn-primary" style="width:100%; margin-top:16px;" onclick="nav('checkout')">Proceed to Checkout</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+function viewCheckout(){
+  const t = calcTotals();
+  const f = checkoutForm;
+  const field = (label,key,type='text',half=true) => `<div class="field"><label>${label}</label><input type="${type}" value="${f[key]}" oninput="checkoutForm.${key}=this.value"></div>`;
+  return `<section class="section wrap">
+    <div class="section-head"><h2>Checkout</h2></div>
+    <div class="co-layout">
+      <div>
+        <div class="panel">
+          <h3>Shipping Details</h3>
+          <div class="form-grid">
+            ${field('Full Name','name')}
+            ${field('Email','email','email')}
+            ${field('Phone','phone','tel')}
+            ${field('ZIP / Postal Code','zip')}
+          </div>
+          ${field('Address Line 1','line1')}
+          <div class="form-grid">
+            ${field('City','city')}
+            ${field('State','state')}
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Payment Method</h3>
+          ${['Card','UPI','Cash on Delivery'].map(m=>`
+            <div class="pay-opt ${f.payment===m?'active':''}" onclick="checkoutForm.payment='${m}'; render()">
+              <div class="pay-opt-head"><input type="radio" ${f.payment===m?'checked':''}> ${m}</div>
+              ${f.payment===m && m==='Card' ? `<div class="form-grid" style="margin-top:12px;"><div class="field"><label>Card Number</label><input type="text" placeholder="4242 4242 4242 4242" value="${f.cardNum}" oninput="checkoutForm.cardNum=this.value"></div><div class="field"><label>Expiry / CVC</label><input type="text" placeholder="MM/YY · CVC"></div></div>` : ''}
+              ${f.payment===m && m==='UPI' ? `<div class="field" style="margin-top:12px;"><label>UPI ID</label><input type="text" placeholder="yourname@upi" value="${f.upiId}" oninput="checkoutForm.upiId=this.value"></div>` : ''}
+              ${f.payment===m && m==='Cash on Delivery' ? `<p style="font-size:12px; color:var(--ink-dim); margin-top:10px;">Pay in cash when your order arrives.</p>` : ''}
+            </div>`).join('')}
+          <p style="font-size:11px; color:var(--ink-dim); margin-top:10px;">Demo checkout — no real payment is charged.</p>
+        </div>
+      </div>
+      <div class="summary-box">
+        <h3 style="font-size:16px; margin-bottom:16px;">Order Total</h3>
+        <div class="summary-line"><span>Subtotal</span><span class="mono">${fmt(t.subtotal)}</span></div>
+        <div class="summary-line"><span>Discount</span><span class="mono">-${fmt(t.discount)}</span></div>
+        <div class="summary-line"><span>Shipping</span><span class="mono">${t.shipping===0?'Free':fmt(t.shipping)}</span></div>
+        <div class="summary-line"><span>Tax</span><span class="mono">${fmt(t.tax)}</span></div>
+        <div class="summary-line total"><span>Total</span><span>${fmt(t.total)}</span></div>
+        <button class="btn btn-primary" id="placeOrderBtn" style="width:100%; margin-top:16px;" onclick="placeOrder()">Place Order</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+function trailProgress(status){
+  const steps = ['Processing','Shipped','Out for Delivery','Delivered'];
+  if(status==='Cancelled') return `<div class="status-pill status-Cancelled">Order Cancelled</div>`;
+  const idx = steps.indexOf(status);
+  return `<div class="trail">${steps.map((s,i)=>`
+    <div class="trail-step ${i<idx?'done':i===idx?'current':''}"><div class="trail-dot"></div><div class="lbl">${s}</div></div>
+  `).join('')}</div>`;
+}
+
+function viewConfirmation(){
+  const o = DB.orders.find(o=>o.id===state.lastOrderId);
+  if(!o) return `<section class="section wrap"><p>No recent order found.</p><button class="btn btn-outline" onclick="nav('shop')">Shop Products</button></section>`;
+  return `<section class="section wrap" style="max-width:640px;">
+    <div class="panel" style="text-align:center; padding:40px;">
+      <div style="font-size:40px; color:var(--ok);">✓</div>
+      <h2 style="margin:14px 0 6px;">Order Placed</h2>
+      <p style="color:var(--ink-dim);">Confirmation sent to ${o.customer.email}</p>
+      <div class="eyebrow" style="margin-top:18px;">ORDER ${o.id}</div>
+      ${trailProgress(o.status)}
+      <div style="display:flex; gap:12px; justify-content:center; margin-top:30px;">
+        <button class="btn btn-outline" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
+        <button class="btn btn-primary" onclick="nav('shop')">Continue Shopping</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+function viewOrders(){
+  const email = state.myOrdersEmail;
+  const matches = state.myOrdersResults || [];
+  return `<section class="section wrap">
+    <div class="section-head"><h2>Track Your Order</h2></div>
+    <div class="panel" style="max-width:420px;">
+      <div class="field"><label>Email used at checkout</label><input type="email" value="${email}" oninput="state.myOrdersEmail=this.value" placeholder="you@example.com" onkeydown="if(event.key==='Enter') findMyOrders()"></div>
+      <button class="btn btn-primary" onclick="findMyOrders()">Find Orders</button>
+      <p style="font-size:11px; color:var(--ink-dim); margin-top:10px;">Try a demo account: marisol@example.com</p>
+    </div>
+    ${state.myOrdersSearched ? (matches.length? matches.map(o=>`
+      <div class="panel" style="margin-top:18px;">
+        <div class="toolbar"><div><strong>${o.id}</strong> <span class="card-cat">· ${new Date(o.date).toLocaleDateString()}</span></div>
+          <span class="status-pill status-${o.status.replace(/ /g,'-')}">${o.status}</span></div>
+        ${trailProgress(o.status)}
+        <div style="margin-top:18px;">
+          ${o.items.map(it=>`<div class="summary-line"><span>${it.name} × ${it.qty}</span><span class="mono">${fmt(it.price*it.qty)}</span></div>`).join('')}
+          <div class="summary-line total"><span>Total</span><span>${fmt(o.total)}</span></div>
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
+      </div>`).join('') : `<p style="margin-top:20px; color:var(--ink-dim);">No orders found for that email.</p>`) : ''}
+  </section>`;
+}
+async function findMyOrders(){
+  const email = state.myOrdersEmail;
+  if(!email){ showToast('Enter the email you used at checkout'); return; }
+  try{
+    const orders = await apiFetch('/orders?email=' + encodeURIComponent(email));
+    mergeOrders(orders);
+    state.myOrdersResults = orders;
+    state.myOrdersSearched = true;
+    render();
+  } catch(err){ showToast(err.message || 'Could not look up orders'); }
+}
+
+/* ============================================================
+   VIEWS — ADMIN
+============================================================ */
+function viewAdminLogin(){
+  return `<div class="admin-login-box">
+    <h3 style="margin-bottom:16px;">Owner Control Panel</h3>
+    <p style="font-size:12px; color:var(--ink-dim); margin-bottom:18px;">Enter the admin password set in <span class="mono">server.js</span> (default: <span class="mono">admin123</span>)</p>
+    <div class="field"><label>Password</label><input type="text" id="adminPass" placeholder="Enter password" onkeydown="if(event.key==='Enter') adminLogin()"></div>
+    <button class="btn btn-primary" style="width:100%;" onclick="adminLogin()">Enter Dashboard</button>
+    <button class="btn-ghost" style="margin-top:10px;" onclick="nav('home')">← Back to store</button>
+  </div>`;
+}
+async function adminLogin(){
+  const val = document.getElementById('adminPass').value;
+  try{
+    const data = await apiFetch('/admin/login', {method:'POST', body:JSON.stringify({password:val})});
+    authToken = data.token;
+    state.isAdmin = true;
+    const [orders, customers] = await Promise.all([apiFetch('/orders'), apiFetch('/customers')]);
+    DB.orders = orders; DB.customers = customers;
+    nav('admin');
+  } catch(err){ showToast(err.message || 'Incorrect password'); }
+}
+async function adminLogout(){
+  try{ await apiFetch('/admin/logout', {method:'POST'}); } catch(e){}
+  authToken = null; state.isAdmin=false; nav('home');
+}
+
+function adminSidebar(){
+  const item = (v,label) => `<a href="#" class="${state.adminView===v?'active':''}" onclick="event.preventDefault(); state.adminView='${v}'; render()">${label}</a>`;
+  return `<div class="admin-side">
+    ${item('dashboard','Dashboard')}
+    ${item('products','Products')}
+    ${item('orders','Orders')}
+    ${item('customers','Customers')}
+    ${item('coupons','Coupons')}
+    <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
+    <a href="#" onclick="event.preventDefault(); nav('home')">← View Store</a>
+    <a href="#" onclick="event.preventDefault(); adminLogout()" style="color:var(--danger);">Log Out</a>
+  </div>`;
+}
+
+function adminDashboard(){
+  const orders = DB.orders;
+  const revenue = orders.reduce((s,o)=>s+o.total,0);
+  const avgOrder = orders.length? revenue/orders.length : 0;
+  const last7 = [...Array(7)].map((_,i)=>{
+    const d = new Date(); d.setDate(d.getDate()-(6-i));
+    const dayRev = orders.filter(o=> new Date(o.date).toDateString()===d.toDateString()).reduce((s,o)=>s+o.total,0);
+    return {label:d.toLocaleDateString(undefined,{weekday:'short'}), val:dayRev};
+  });
+  const maxVal = Math.max(...last7.map(d=>d.val), 50);
+  const topProducts = [...DB.products].map(p=>{
+    const sold = orders.flatMap(o=>o.items).filter(i=>i.id===p.id).reduce((s,i)=>s+i.qty,0);
+    return {...p, sold};
+  }).sort((a,b)=>b.sold-a.sold).slice(0,5);
+
+  return `
+  <div class="kpi-row">
+    <div class="kpi"><span class="eyebrow">Total Revenue</span><div class="val">${fmt(revenue)}</div><div class="delta">${orders.length} orders lifetime</div></div>
+    <div class="kpi"><span class="eyebrow">Orders</span><div class="val">${orders.length}</div><div class="delta">${orders.filter(o=>o.status==='Processing').length} processing</div></div>
+    <div class="kpi"><span class="eyebrow">Customers</span><div class="val">${DB.customers.length}</div><div class="delta">Across all channels</div></div>
+    <div class="kpi"><span class="eyebrow">Avg. Order Value</span><div class="val">${fmt(avgOrder)}</div><div class="delta">Per completed order</div></div>
+  </div>
+  <div class="panel">
+    <h3>Revenue — Last 7 Days</h3>
+    <div class="bar-chart">
+      ${last7.map(d=>`<div class="bar-col"><div class="bar" style="height:${Math.max(4,(d.val/maxVal)*130)}px;" title="${fmt(d.val)}"></div><div class="bar-label">${d.label}</div></div>`).join('')}
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Top Selling Products</h3>
+    <table><thead><tr><th>Product</th><th>Category</th><th>Units Sold</th><th>Stock Left</th></tr></thead>
+    <tbody>${topProducts.map(p=>`<tr><td>${p.name}</td><td>${p.category}</td><td class="mono">${p.sold}</td><td class="mono">${p.stock}</td></tr>`).join('')}</tbody></table>
+  </div>
+  <div class="panel">
+    <h3>Recent Orders</h3>
+    <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
+    <tbody>${orders.slice(0,6).map(o=>`<tr><td class="mono">${o.id}</td><td>${o.customer.name}</td><td>${new Date(o.date).toLocaleDateString()}</td><td class="mono">${fmt(o.total)}</td><td><span class="status-pill status-${o.status.replace(/ /g,'-')}">${o.status}</span></td></tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function adminProducts(){
+  return `<div class="toolbar">
+    <h2 style="font-size:22px;">Products (${DB.products.length})</h2>
+    <button class="btn btn-primary btn-sm" onclick="openProductModal(null)">+ Add Product</button>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Rating</th><th></th></tr></thead>
+    <tbody>${DB.products.map(p=>`
+      <tr>
+        <td><div style="width:34px; height:34px; border-radius:3px; background:hsl(${p.hue} 35% 20%); color:hsl(${p.hue} 60% 60%); display:flex; align-items:center; justify-content:center;">${ICONS[p.category]}</div></td>
+        <td>${p.name}</td><td>${p.category}</td>
+        <td class="mono">${fmt(p.price)}</td>
+        <td class="mono">${p.stock<=0?'<span style="color:var(--danger)">0</span>':p.stock}</td>
+        <td class="mono">${p.rating}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn-ghost" onclick="openProductModal('${p.id}')">Edit</button>
+          <button class="btn-ghost" style="color:var(--danger);" onclick="deleteProduct('${p.id}')">Delete</button>
+        </td>
+      </tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function adminOrders(){
+  const statuses = ['Processing','Shipped','Out for Delivery','Delivered','Cancelled'];
+  return `<div class="toolbar"><h2 style="font-size:22px;">Orders (${DB.orders.length})</h2></div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th></th></tr></thead>
+    <tbody>${DB.orders.map(o=>`
+      <tr>
+        <td class="mono">${o.id}</td>
+        <td>${o.customer.name}<br><span class="card-cat">${o.customer.email}</span></td>
+        <td>${new Date(o.date).toLocaleDateString()}</td>
+        <td>${o.items.reduce((s,i)=>s+i.qty,0)}</td>
+        <td class="mono">${fmt(o.total)}</td>
+        <td>${o.payment}</td>
+        <td><select style="width:150px;" onchange="updateOrderStatus('${o.id}', this.value)">
+          ${statuses.map(s=>`<option value="${s}" ${o.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></td>
+        <td><button class="btn-ghost" onclick="downloadInvoicePDF('${o.id}')">Invoice</button></td>
+      </tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function adminCustomers(){
+  const rows = DB.customers.map(c=>{
+    const orders = DB.orders.filter(o=>o.customer.email===c.email);
+    const spent = orders.reduce((s,o)=>s+o.total,0);
+    return {...c, orderCount:orders.length, spent};
+  }).sort((a,b)=>b.spent-a.spent);
+  return `<div class="toolbar"><h2 style="font-size:22px;">Customers (${DB.customers.length})</h2></div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Orders</th><th>Total Spent</th><th>Customer Since</th></tr></thead>
+    <tbody>${rows.map(c=>`<tr><td>${c.name}</td><td>${c.email}</td><td>${c.phone||'—'}</td><td class="mono">${c.orderCount}</td><td class="mono">${fmt(c.spent)}</td><td>${c.since}</td></tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function adminCoupons(){
+  return `<div class="toolbar">
+    <h2 style="font-size:22px;">Coupons (${DB.coupons.length})</h2>
+    <button class="btn btn-primary btn-sm" onclick="openCouponModal(null)">+ Add Coupon</button>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Code</th><th>Type</th><th>Value</th><th>Min Order</th><th>Status</th><th></th></tr></thead>
+    <tbody>${DB.coupons.map(c=>`
+      <tr>
+        <td class="mono">${c.code}</td><td>${c.type}</td>
+        <td class="mono">${c.type==='percent'?c.value+'%':c.type==='flat'?fmt(c.value):'Free Ship'}</td>
+        <td class="mono">${fmt(c.minOrder)}</td>
+        <td>${c.active?'<span class="status-pill status-Delivered">Active</span>':'<span class="status-pill status-Cancelled">Off</span>'}</td>
+        <td><button class="btn-ghost" onclick="openCouponModal('${c.code}')">Edit</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCoupon('${c.code}')">Delete</button></td>
+      </tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function viewAdmin(){
+  if(!state.isAdmin) return viewAdminLogin();
+  const map = {dashboard:adminDashboard, products:adminProducts, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons};
+  return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
+}
+
+/* ============================================================
+   MODALS
+============================================================ */
+function modalHtml(){
+  if(!state.modal) return '';
+  if(state.modal.type==='product'){
+    const d = state.modal.data;
+    const categories = ['Electronics','Watches','Home Decor','Kitchen'];
+    return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${d.id?'Edit Product':'Add Product'}</h3>
+        <div class="field"><label>Name</label><input type="text" value="${d.name}" oninput="state.modal.data.name=this.value"></div>
+        <div class="form-grid">
+          <div class="field"><label>Category</label><select onchange="state.modal.data.category=this.value">${categories.map(c=>`<option ${d.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+          <div class="field"><label>Stock</label><input type="number" value="${d.stock}" oninput="state.modal.data.stock=this.value"></div>
+          <div class="field"><label>Price</label><input type="number" value="${d.price}" oninput="state.modal.data.price=this.value"></div>
+          <div class="field"><label>MRP (before discount)</label><input type="number" value="${d.mrp}" oninput="state.modal.data.mrp=this.value"></div>
+        </div>
+        <div class="field"><label>Variants (comma separated)</label><input type="text" value="${Array.isArray(d.variants)?d.variants.join(', '):d.variants}" oninput="state.modal.data.variants=this.value"></div>
+        <div class="field"><label>Description</label><textarea rows="3" oninput="state.modal.data.desc=this.value">${d.desc}</textarea></div>
+        <div class="field"><label><input type="checkbox" ${d.featured?'checked':''} onchange="state.modal.data.featured=this.checked" style="width:auto; margin-right:6px;">Feature on homepage</label></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" onclick="saveProductModal()">Save Product</button>
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  if(state.modal.type==='coupon'){
+    const d = state.modal.data;
+    return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${d._isNew?'Add Coupon':'Edit Coupon'}</h3>
+        <div class="field"><label>Code</label><input type="text" value="${d.code}" oninput="state.modal.data.code=this.value"></div>
+        <div class="form-grid">
+          <div class="field"><label>Type</label><select onchange="state.modal.data.type=this.value">
+            <option value="percent" ${d.type==='percent'?'selected':''}>Percent Off</option>
+            <option value="flat" ${d.type==='flat'?'selected':''}>Flat Amount Off</option>
+            <option value="shipping" ${d.type==='shipping'?'selected':''}>Free Shipping</option>
+          </select></div>
+          <div class="field"><label>Value</label><input type="number" value="${d.value}" oninput="state.modal.data.value=this.value"></div>
+          <div class="field"><label>Min Order</label><input type="number" value="${d.minOrder}" oninput="state.modal.data.minOrder=this.value"></div>
+          <div class="field"><label>Active</label><select onchange="state.modal.data.active=this.value==='true'">
+            <option value="true" ${d.active?'selected':''}>Yes</option><option value="false" ${!d.active?'selected':''}>No</option>
+          </select></div>
+        </div>
+        <div class="field"><label>Description</label><input type="text" value="${d.desc||''}" oninput="state.modal.data.desc=this.value"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" onclick="saveCouponModal()">Save Coupon</button>
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  return '';
+}
+
+/* ============================================================
+   MASTER RENDER
+============================================================ */
+function render(){
+  const views = {
+    home:viewHome, shop:viewShop, collections:viewCollections, product:viewProduct,
+    cart:viewCart, checkout:viewCheckout, confirmation:viewConfirmation, orders:viewOrders,
+    'admin-login':viewAdminLogin, admin:viewAdmin,
+  };
+  const isAdminChrome = state.view==='admin' || (state.view==='admin-login');
+  let html = '';
+  if(isAdminChrome){
+    html = views[state.view]();
+  } else {
+    html = header() + (views[state.view]?views[state.view]():viewHome()) + footer();
+  }
+  document.getElementById('app').innerHTML = html + modalHtml() + toast();
+}
+
+loadCatalog();
+</script>
+</body>
+</html>

@@ -6,6 +6,7 @@
 <title>VANTURA — Smart Finds, Delivered</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
@@ -49,6 +50,9 @@ img,svg{display:block;}
 }
 
 /* ---------- header ---------- */
+.announce-bar{background:var(--accent); color:var(--accent-ink); text-align:center; font-size:12px; font-weight:600; letter-spacing:.02em; padding:9px 16px; position:relative;}
+.announce-bar .close-x{position:absolute; right:14px; top:50%; transform:translateY(-50%); cursor:pointer; opacity:.7; font-size:13px;}
+.announce-bar .close-x:hover{opacity:1;}
 header.site{position:sticky; top:0; z-index:50; background:rgba(18,25,21,.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--line);}
 .headbar{display:flex; align-items:center; gap:28px; padding:16px 24px; max-width:1180px; margin:0 auto;}
 .logo{font-family:'Fjalla One'; font-size:22px; letter-spacing:.06em; display:flex; align-items:center; gap:8px; cursor:pointer;}
@@ -217,6 +221,14 @@ tr:hover td{background:rgba(255,255,255,.02);}
 .inv-totals div{display:flex; justify-content:space-between; font-size:13px; padding:4px 0;}
 .inv-totals .grand{font-weight:700; font-size:16px; border-top:2px solid #161B14; padding-top:8px; margin-top:6px;}
 
+/* ---------- scratch card ---------- */
+.scratch-card-wrap{position:relative; width:320px; max-width:100%; height:170px; margin:26px auto 6px; border-radius:8px; overflow:hidden; border:1px solid var(--line);}
+.scratch-reveal{position:absolute; inset:0; background:linear-gradient(135deg,var(--surface-3),var(--surface)); display:flex; align-items:center; justify-content:center; text-align:center; padding:10px;}
+.scratch-reveal .eyebrow{display:block; margin-bottom:6px;}
+.scratch-code{font-family:'IBM Plex Mono',monospace; font-size:26px; font-weight:700; color:var(--accent); letter-spacing:.06em; margin:4px 0;}
+.scratch-desc{font-size:12px; color:var(--ink-dim);}
+#scratchCanvas{position:absolute; inset:0; width:100%; height:100%; cursor:pointer; touch-action:none;}
+
 /* ---------- toast ---------- */
 .toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:var(--surface-3); border:1px solid var(--accent); color:var(--ink); padding:12px 20px; border-radius:4px; font-size:13px; z-index:500; display:flex; align-items:center; gap:10px;}
 
@@ -264,11 +276,23 @@ const DB = {
   coupons: [],
   orders: [],
   customers: [],
+  collections: [],
+  announcement: {text:'', active:false},
 };
 
 async function apiFetch(path, opts={}){
   const headers = {'Content-Type':'application/json', ...(opts.headers||{})};
   if(authToken) headers['Authorization'] = 'Bearer ' + authToken;
+  const res = await fetch(API + path, {...opts, headers});
+  let data = null;
+  try { data = await res.json(); } catch(e){ /* no body */ }
+  if(!res.ok){ throw new Error((data && data.message) || ('Request failed (' + res.status + ')')); }
+  return data;
+}
+
+async function customerFetch(path, opts={}){
+  const headers = {'Content-Type':'application/json', ...(opts.headers||{})};
+  if(state.customerToken) headers['Authorization'] = 'Bearer ' + state.customerToken;
   const res = await fetch(API + path, {...opts, headers});
   let data = null;
   try { data = await res.json(); } catch(e){ /* no body */ }
@@ -286,12 +310,16 @@ function mergeOrders(list){
 async function loadCatalog(){
   document.getElementById('app').innerHTML = `<div style="padding:120px 20px; text-align:center; color:var(--ink-dim); font-family:'Inter',sans-serif;">Loading Vantura…</div>`;
   try{
-    const [products, coupons] = await Promise.all([
+    const [products, coupons, collections, announcement] = await Promise.all([
       apiFetch('/products'),
       apiFetch('/coupons'),
+      apiFetch('/collections'),
+      apiFetch('/announcement'),
     ]);
     DB.products = products;
     DB.coupons = coupons;
+    DB.collections = collections;
+    DB.announcement = announcement;
     render();
   } catch(err){
     document.getElementById('app').innerHTML = `
@@ -310,7 +338,7 @@ const state = {
   view:'home',
   productId:null,
   cart:[],           // {id, variant, qty}
-  filters:{category:'All', sort:'featured', maxPrice:400, query:''},
+  filters:{category:'All', sort:'featured', maxPrice:4000, query:''},
   coupon:null,
   lastOrderId:null,
   myOrdersEmail:'',
@@ -320,11 +348,63 @@ const state = {
   adminView:'dashboard',
   modal:null,        // {type:'product'|'coupon', data:{...}}
   toast:null,
+  customerToken:null,
+  customer:null,     // {name, email, phone}
+  accountMode:'login',
+  accountForm:{name:'', email:'', password:''},
+  myAccountOrders:[],
+  myAccountOrdersLoading:false,
+  announceDismissed:false,
 };
 
-function nav(view, extra={}){ Object.assign(state, {view}, extra); window.scrollTo(0,0); render(); }
+function persistCart(){ try{ localStorage.setItem('vantura_cart', JSON.stringify(state.cart)); }catch(e){} syncCartToServer(); }
+function restoreCart(){ try{ const raw = localStorage.getItem('vantura_cart'); if(raw) state.cart = JSON.parse(raw) || []; }catch(e){} }
+function mergeServerCart(serverCart){
+  (serverCart||[]).forEach(sc=>{
+    const existing = state.cart.find(c=>c.id===sc.id && c.variant===sc.variant);
+    if(existing) existing.qty += sc.qty; else state.cart.push({...sc});
+  });
+}
+async function syncCartToServer(){
+  if(!state.customerToken) return;
+  try{ await customerFetch('/auth/cart', {method:'PUT', body:JSON.stringify({cart: state.cart})}); } catch(e){ /* silent — cart still works locally */ }
+}
+async function refreshCartFromServer(){
+  if(!state.customerToken) return;
+  try{
+    const data = await customerFetch('/auth/me');
+    mergeServerCart(data.cart);
+    try{ localStorage.setItem('vantura_cart', JSON.stringify(state.cart)); }catch(e){}
+    render();
+  } catch(e){ /* token may be stale — the account page will sign them out cleanly if so */ }
+}
+function restoreAuth(){
+  try{
+    const token = localStorage.getItem('vantura_customer_token');
+    const customer = localStorage.getItem('vantura_customer');
+    if(token && customer){
+      state.customerToken = token; state.customer = JSON.parse(customer);
+      checkoutForm.name = state.customer.name; checkoutForm.email = state.customer.email; checkoutForm.phone = state.customer.phone||'';
+    }
+  }catch(e){}
+}
+
+function nav(view, extra={}){
+  if(view==='product' && extra.productId !== state.productId){
+    window.__selVariant = null; window.__selQty = 1; window.__selImage = 0;
+  }
+  Object.assign(state, {view}, extra);
+  window.scrollTo(0,0);
+  render();
+  // silently refresh the catalog whenever entering a browsing view, so
+  // products added/edited elsewhere (e.g. by the admin) always show up
+  if(['shop','home','collections'].includes(view)){
+    apiFetch('/products').then(products => { DB.products = products; render(); }).catch(()=>{});
+  }
+  if(view==='account' && state.customer){ state.myAccountOrdersLoading = true; loadMyAccountOrders(); }
+}
 function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
-const fmt = n => '$' + n.toFixed(2);
+const fmt = n => new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:0}).format(n);
 const findProduct = id => DB.products.find(p=>p.id===id);
 
 /* ============================================================
@@ -334,6 +414,7 @@ function addToCart(id, variant, qty){
   qty = qty||1;
   const existing = state.cart.find(c=>c.id===id && c.variant===variant);
   if(existing){ existing.qty += qty; } else { state.cart.push({id,variant,qty}); }
+  persistCart();
   showToast('Added to cart — ' + findProduct(id).name);
 }
 function updateCartQty(id, variant, delta){
@@ -341,9 +422,10 @@ function updateCartQty(id, variant, delta){
   if(!row) return;
   row.qty += delta;
   if(row.qty<=0) state.cart = state.cart.filter(c=>c!==row);
+  persistCart();
   render();
 }
-function removeFromCart(id, variant){ state.cart = state.cart.filter(c=>!(c.id===id && c.variant===variant)); render(); }
+function removeFromCart(id, variant){ state.cart = state.cart.filter(c=>!(c.id===id && c.variant===variant)); persistCart(); render(); }
 function cartCount(){ return state.cart.reduce((s,c)=>s+c.qty,0); }
 function cartLines(){ return state.cart.map(c=>({...c, product:findProduct(c.id)})); }
 function cartSubtotal(){ return cartLines().reduce((s,l)=>s+l.product.price*l.qty,0); }
@@ -369,8 +451,8 @@ function calcTotals(){
     if(state.coupon.type==='shipping') freeShip = true;
   }
   discount = Math.min(discount, subtotal);
-  let shipping = subtotal>75 || freeShip || subtotal===0 ? 0 : 5.99;
-  const tax = +((subtotal-discount)*0.08).toFixed(2);
+  let shipping = subtotal>999 || freeShip || subtotal===0 ? 0 : 79;
+  const tax = +((subtotal-discount)*0.18).toFixed(2);
   const total = +(subtotal - discount + shipping + tax).toFixed(2);
   return {subtotal:+subtotal.toFixed(2), discount:+discount.toFixed(2), shipping:+shipping.toFixed(2), tax, total};
 }
@@ -378,7 +460,69 @@ function calcTotals(){
 /* ============================================================
    CHECKOUT / ORDERS
 ============================================================ */
-const checkoutForm = {name:'',email:'',phone:'',line1:'',city:'',state:'',zip:'',country:'USA',payment:'Card',cardNum:'',upiId:''};
+const checkoutForm = {name:'',email:'',phone:'',line1:'',city:'',state:'',zip:'',country:'India',payment:'Card',cardNum:'',upiId:''};
+
+/* ============================================================
+   CUSTOMER ACCOUNTS
+============================================================ */
+function applyCustomerToCheckout(){
+  checkoutForm.name = state.customer.name;
+  checkoutForm.email = state.customer.email;
+  checkoutForm.phone = state.customer.phone || '';
+}
+async function customerSignup(){
+  const f = state.accountForm;
+  if(!f.name || !f.email || !f.password){ showToast('Please fill in all fields'); return; }
+  if(f.password.length < 6){ showToast('Password must be at least 6 characters'); return; }
+  try{
+    const data = await apiFetch('/auth/signup', {method:'POST', body:JSON.stringify(f)});
+    state.customerToken = data.token; state.customer = data.customer;
+    localStorage.setItem('vantura_customer_token', data.token);
+    localStorage.setItem('vantura_customer', JSON.stringify(data.customer));
+    mergeServerCart(data.cart); persistCart();
+    applyCustomerToCheckout();
+    state.accountForm = {name:'', email:'', password:''};
+    showToast('Account created — welcome, ' + data.customer.name);
+    nav('account');
+  } catch(err){ showToast(err.message || 'Could not create account'); }
+}
+async function customerLogin(){
+  const f = state.accountForm;
+  if(!f.email || !f.password){ showToast('Enter your email and password'); return; }
+  try{
+    const data = await apiFetch('/auth/login', {method:'POST', body:JSON.stringify(f)});
+    state.customerToken = data.token; state.customer = data.customer;
+    localStorage.setItem('vantura_customer_token', data.token);
+    localStorage.setItem('vantura_customer', JSON.stringify(data.customer));
+    mergeServerCart(data.cart); persistCart();
+    applyCustomerToCheckout();
+    state.accountForm = {name:'', email:'', password:''};
+    showToast('Welcome back, ' + data.customer.name);
+    nav('account');
+  } catch(err){ showToast(err.message || 'Could not log in'); }
+}
+async function customerLogout(){
+  try{ await customerFetch('/auth/logout', {method:'POST'}); } catch(e){}
+  state.customerToken = null; state.customer = null; state.myAccountOrders = [];
+  localStorage.removeItem('vantura_customer_token');
+  localStorage.removeItem('vantura_customer');
+  showToast('Logged out'); nav('home');
+}
+async function loadMyAccountOrders(){
+  try{
+    const data = await customerFetch('/auth/me');
+    state.customer = data.customer;
+    state.myAccountOrders = data.orders;
+    state.myAccountOrdersLoading = false;
+    mergeOrders(data.orders);
+    render();
+  } catch(err){
+    // token expired/invalid (e.g. server restarted) — sign the customer out quietly
+    state.customerToken = null; state.customer = null; state.myAccountOrdersLoading = false;
+    localStorage.removeItem('vantura_customer_token'); localStorage.removeItem('vantura_customer');
+    render();
+  }
+}
 
 async function placeOrder(){
   if(!checkoutForm.name || !checkoutForm.email || !checkoutForm.line1 || !checkoutForm.city || !checkoutForm.zip){
@@ -401,7 +545,7 @@ async function placeOrder(){
     mergeOrders([order]);
     // refresh product stock levels shown in the storefront
     DB.products = await apiFetch('/products');
-    state.cart = []; state.coupon = null; state.lastOrderId = order.id;
+    state.cart = []; state.coupon = null; state.lastOrderId = order.id; persistCart();
     nav('confirmation');
   } catch(err){
     showToast(err.message || 'Could not place order');
@@ -421,8 +565,28 @@ async function updateOrderStatus(orderId, status){
    ADMIN: PRODUCT / COUPON CRUD
 ============================================================ */
 function openProductModal(id){
-  const data = id ? {...findProduct(id)} : {id:null,name:'',category:'Electronics',price:0,mrp:0,stock:0,rating:4.5,hue:20,desc:'',variants:['One Size'],featured:false};
+  let data;
+  if(id){
+    const p = findProduct(id);
+    // backward-compatible: older products may have a single `image` string instead of an `images` array
+    const images = Array.isArray(p.images) ? [...p.images] : (p.image ? [p.image] : []);
+    data = {...p, images};
+  } else {
+    data = {id:null,name:'',category:'Electronics',price:0,mrp:0,stock:0,rating:4.5,hue:20,desc:'',images:[],variants:['One Size'],featured:false};
+  }
   state.modal = {type:'product', data};
+  render();
+}
+function addImageToModal(){
+  const input = document.getElementById('newImageUrlInput');
+  const url = (input.value || '').trim();
+  if(!url){ showToast('Paste an image URL first'); return; }
+  if(!state.modal.data.images) state.modal.data.images = [];
+  state.modal.data.images.push(url);
+  render();
+}
+function removeImageFromModal(idx){
+  state.modal.data.images.splice(idx, 1);
   render();
 }
 async function saveProductModal(){
@@ -431,6 +595,7 @@ async function saveProductModal(){
   const payload = {
     name:d.name, category:d.category, price:parseFloat(d.price), mrp:parseFloat(d.mrp)||parseFloat(d.price),
     stock:parseInt(d.stock)||0, rating:parseFloat(d.rating)||4.5, hue:parseInt(d.hue)||20, desc:d.desc,
+    images: d.images || [],
     variants: typeof d.variants==='string' ? d.variants.split(',').map(s=>s.trim()).filter(Boolean) : d.variants,
     featured: !!d.featured,
   };
@@ -486,16 +651,94 @@ function closeModal(){ state.modal=null; render(); }
 /* ============================================================
    INVOICE (PDF via jsPDF)
 ============================================================ */
-function downloadInvoicePDF(orderId){
+function exportToExcel(){
+  if(typeof XLSX === 'undefined'){ showToast('Excel library failed to load — check your connection and try again'); return; }
+  try{
+    const wb = XLSX.utils.book_new();
+
+    const orderRows = DB.orders.map(o => ({
+      'Order ID': o.id,
+      'Date': new Date(o.date).toLocaleString('en-IN'),
+      'Customer Name': o.customer.name,
+      'Customer Email': o.customer.email,
+      'Items': o.items.map(it => `${it.name} (${it.variant||'-'}) x${it.qty}`).join('; '),
+      'Subtotal (₹)': o.subtotal,
+      'Discount (₹)': o.discount,
+      'Shipping (₹)': o.shipping,
+      'GST (₹)': o.tax,
+      'Total (₹)': o.total,
+      'Payment Method': o.payment,
+      'Status': o.status,
+      'Coupon Used': o.couponCode || '',
+      'Shipping Address': o.address ? `${o.address.line1}, ${o.address.city}, ${o.address.state} ${o.address.zip}, ${o.address.country}` : '',
+    }));
+    const ordersSheet = XLSX.utils.json_to_sheet(orderRows.length ? orderRows : [{'Note':'No orders yet'}]);
+    XLSX.utils.book_append_sheet(wb, ordersSheet, 'Orders');
+
+    const customerRows = DB.customers.map(c => {
+      const custOrders = DB.orders.filter(o => o.customer.email === c.email);
+      const spent = custOrders.reduce((s,o) => s + o.total, 0);
+      return {
+        'Name': c.name,
+        'Email': c.email,
+        'Phone': c.phone || '',
+        'Customer Since': c.since || '',
+        'Total Orders': custOrders.length,
+        'Total Spent (₹)': spent,
+        'Has Account (Login)': c.passwordHash ? 'Yes' : 'No (guest checkout)',
+      };
+    });
+    const customersSheet = XLSX.utils.json_to_sheet(customerRows.length ? customerRows : [{'Note':'No customers yet'}]);
+    XLSX.utils.book_append_sheet(wb, customersSheet, 'Customers');
+
+    const productRows = DB.products.map(p => ({
+      'ID': p.id, 'Name': p.name, 'Category': p.category,
+      'Price (₹)': p.price, 'MRP (₹)': p.mrp, 'Stock': p.stock,
+      'Rating': p.rating, 'Featured': p.featured ? 'Yes' : 'No',
+    }));
+    const productsSheet = XLSX.utils.json_to_sheet(productRows);
+    XLSX.utils.book_append_sheet(wb, productsSheet, 'Products');
+
+    const filename = 'vantura-export-' + new Date().toISOString().slice(0,10) + '.xlsx';
+    XLSX.writeFile(wb, filename);
+    showToast('Excel file downloaded');
+  } catch(err){
+    showToast('Could not generate Excel file');
+  }
+}
+
+function loadImageDataUrl(url){
+  return new Promise((resolve) => {
+    if(!url){ resolve(null); return; }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = setTimeout(() => resolve(null), 5000);
+    img.onload = () => {
+      clearTimeout(timer);
+      try{
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      } catch(e){ resolve(null); } // e.g. image host blocks cross-origin canvas reads
+    };
+    img.onerror = () => { clearTimeout(timer); resolve(null); };
+    img.src = url;
+  });
+}
+
+async function downloadInvoicePDF(orderId){
   const o = DB.orders.find(o=>o.id===orderId);
   if(!o) return;
+  showToast('Preparing invoice…');
+  // jsPDF's built-in fonts don't include the ₹ glyph, so invoices use "Rs." instead
+  const fmtPdf = n => 'Rs. ' + new Intl.NumberFormat('en-IN', {maximumFractionDigits:0}).format(n);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(255,90,60);
   doc.text('VANTURA', 14, 20);
   doc.setTextColor(40,40,40); doc.setFontSize(10); doc.setFont('helvetica','normal');
-  doc.text('12 Market Street, Wilmington, DE 19801', 14, 26);
-  doc.text('billing@vantura.example', 14, 31);
+  doc.text('billing@vantura.example', 14, 27);
 
   doc.setFontSize(11); doc.setFont('helvetica','bold');
   doc.text('INVOICE', 160, 20);
@@ -512,23 +755,42 @@ function downloadInvoicePDF(orderId){
   doc.text(o.customer.email, 14, 59);
   doc.text(`${o.address.line1}, ${o.address.city}, ${o.address.state} ${o.address.zip}`, 14, 64);
 
-  const rows = o.items.map(it=>[it.name, it.variant||'-', String(it.qty), fmt(it.price), fmt(it.price*it.qty)]);
+  // load each line item's product photo (best effort — falls back to a blank cell if it can't load)
+  const thumbs = await Promise.all(o.items.map(it => {
+    const product = findProduct(it.id);
+    const src = product ? productImages(product)[0] : null;
+    return loadImageDataUrl(src);
+  }));
+
+  const rows = o.items.map(it=>['', it.name, it.variant||'-', String(it.qty), fmtPdf(it.price), fmtPdf(it.price*it.qty)]);
   doc.autoTable({
-    startY:72, head:[['Item','Variant','Qty','Price','Amount']], body:rows,
-    theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3},
+    startY:72, head:[['Photo','Item','Variant','Qty','Price','Amount']], body:rows,
+    theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9},
+    styles:{fontSize:9, cellPadding:3, minCellHeight:16, valign:'middle'},
+    columnStyles:{0:{cellWidth:16}},
+    didDrawCell: (data) => {
+      if(data.section === 'body' && data.column.index === 0){
+        const dataUrl = thumbs[data.row.index];
+        if(dataUrl){
+          const pad = 1.5;
+          const size = Math.min(data.cell.height, data.cell.width) - pad*2;
+          try{ doc.addImage(dataUrl, 'JPEG', data.cell.x + pad, data.cell.y + pad, size, size); } catch(e){}
+        }
+      }
+    },
   });
   let y = doc.lastAutoTable.finalY + 10;
   const lines = [
-    ['Subtotal', fmt(o.subtotal)],
-    ['Discount' + (o.couponCode?` (${o.couponCode})`:''), '-' + fmt(o.discount)],
-    ['Shipping', o.shipping===0?'Free':fmt(o.shipping)],
-    ['Tax (8%)', fmt(o.tax)],
+    ['Subtotal', fmtPdf(o.subtotal)],
+    ['Discount' + (o.couponCode?` (${o.couponCode})`:''), '-' + fmtPdf(o.discount)],
+    ['Shipping', o.shipping===0?'Free':fmtPdf(o.shipping)],
+    ['GST (18%)', fmtPdf(o.tax)],
   ];
   doc.setFontSize(9);
   lines.forEach(([l,v])=>{ doc.text(l,140,y); doc.text(v,196,y,{align:'right'}); y+=6; });
   doc.setDrawColor(20,20,20); doc.line(140,y,196,y); y+=6;
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('Total', 140, y); doc.text(fmt(o.total), 196, y, {align:'right'});
+  doc.text('Total', 140, y); doc.text(fmtPdf(o.total), 196, y, {align:'right'});
 
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(120,120,120);
   doc.text('Thank you for shopping with Vantura — enjoy your new find.', 14, 280);
@@ -539,14 +801,37 @@ function downloadInvoicePDF(orderId){
 /* ============================================================
    RENDER HELPERS
 ============================================================ */
-function productMedia(p, size='card'){
+function productImages(p){
+  if(Array.isArray(p.images) && p.images.length) return p.images;
+  if(p.image) return [p.image]; // backward-compat with older single-image products
+  return [];
+}
+function productMedia(p, size='card', imgIndex=0){
   const icon = ICONS[p.category] || ICONS.Backpacks;
   const low = p.stock>0 && p.stock<=8;
   const out = p.stock<=0;
-  return `<div class="${size==='card'?'card-media':'pd-media'}" style="background:linear-gradient(155deg,hsl(${p.hue} 40% 22%),hsl(${p.hue} 30% 14%)); color:hsl(${p.hue} 70% 65%); position:relative;">
-    ${size==='card' ? (out?`<span class="badge low">Sold Out</span>`: low?`<span class="badge low">Low Stock</span>`: p.featured?`<span class="badge">Featured</span>`:'') : ''}
+  const cls = size==='card' ? 'card-media' : 'pd-media';
+  const badge = size==='card' ? (out?`<span class="badge low">Sold Out</span>`: low?`<span class="badge low">Low Stock</span>`: p.featured?`<span class="badge">Featured</span>`:'') : '';
+  const images = productImages(p);
+  const src = images[imgIndex] || images[0];
+  if(src){
+    return `<div class="${cls}" style="position:relative; background:var(--surface-2); overflow:hidden;">
+      ${badge}
+      <img src="${src}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="imgFallback(this,'${p.category}')">
+    </div>`;
+  }
+  return `<div class="${cls}" style="background:linear-gradient(155deg,hsl(${p.hue} 40% 22%),hsl(${p.hue} 30% 14%)); color:hsl(${p.hue} 70% 65%); position:relative;">
+    ${badge}
     ${icon}
   </div>`;
+}
+function imgFallback(imgEl, category){
+  // if the image URL fails to load, fall back to the category icon tile
+  const parent = imgEl.parentElement;
+  if(!parent) return;
+  parent.style.background = 'var(--surface-2)';
+  parent.style.color = 'var(--ink-dim)';
+  parent.innerHTML = (ICONS[category] || ICONS.Electronics);
 }
 function stars(r){ const full = Math.round(r); return '★'.repeat(full)+'☆'.repeat(5-full); }
 
@@ -575,6 +860,7 @@ function header(){
         ${link('home','Home')}
         ${link('shop','Shop')}
         ${link('collections','Collections')}
+        ${link('account', state.customer ? state.customer.name.split(' ')[0] : 'Account')}
         ${link('orders','Track Order')}
       </nav>
       <div class="searchbox">
@@ -604,10 +890,7 @@ function footer(){
         <p style="max-width:280px;">Smart, everyday finds — sourced globally, curated closely, shipped straight to your door.</p>
       </div>
       <div><h4>SHOP</h4>
-        <a href="#" onclick="event.preventDefault(); setFilter('category','Electronics'); nav('shop')">Electronics</a>
-        <a href="#" onclick="event.preventDefault(); setFilter('category','Watches'); nav('shop')">Watches</a>
-        <a href="#" onclick="event.preventDefault(); setFilter('category','Home Decor'); nav('shop')">Home Decor</a>
-        <a href="#" onclick="event.preventDefault(); setFilter('category','Kitchen'); nav('shop')">Kitchen</a>
+        ${((DB.collections&&DB.collections.length) ? DB.collections.map(c=>c.key) : ['Electronics','Watches','Home Decor','Kitchen']).map(cat=>`<a href="#" onclick="event.preventDefault(); setFilter('category','${cat}'); nav('shop')">${cat}</a>`).join('')}
       </div>
       <div><h4>SUPPORT</h4>
         <a href="#" onclick="event.preventDefault(); nav('orders')">Track an order</a>
@@ -620,7 +903,7 @@ function footer(){
         <a href="#">Careers</a>
       </div>
     </div>
-    <div class="wrap" style="margin-top:30px; font-size:11px; color:var(--ink-dim); font-family:'IBM Plex Mono';">© 2026 VANTURA — Demo storefront, no real payments are processed.</div>
+    <div class="wrap" style="margin-top:30px; font-size:11px; color:var(--ink-dim); font-family:'IBM Plex Mono';">© 2026 VANTURA. All rights reserved.</div>
   </footer>`;
 }
 
@@ -674,15 +957,23 @@ function viewHome(){
 }
 
 function viewCollections(){
-  const categories = [...new Set(DB.products.map(p=>p.category))];
+  // union of admin-managed collections and any categories that exist on products but have no collection entry yet
+  const productCats = [...new Set(DB.products.map(p=>p.category))];
+  const known = new Set((DB.collections||[]).map(c=>c.key));
+  const extra = productCats.filter(c => !known.has(c)).map(c => ({key:c, name:c, desc:'', image:''}));
+  const collections = [...(DB.collections||[]), ...extra];
   return `<section class="section wrap">
     <div class="section-head"><h2>Collections</h2></div>
-    ${categories.map(c=>`
+    ${collections.map(c=>`
       <div style="margin-bottom:44px;">
-        <div class="section-head"><h3 style="font-size:20px;">${c}</h3>
-          <a href="#" onclick="event.preventDefault(); setFilter('category','${c}'); nav('shop')" style="font-size:12px; color:var(--accent); text-transform:uppercase;">Shop ${c} →</a>
+        <div class="section-head">
+          <div>
+            <h3 style="font-size:20px;">${c.name}</h3>
+            ${c.desc ? `<p style="color:var(--ink-dim); font-size:13px; margin-top:4px; max-width:520px;">${c.desc}</p>` : ''}
+          </div>
+          <a href="#" onclick="event.preventDefault(); setFilter('category','${c.key}'); nav('shop')" style="font-size:12px; color:var(--accent); text-transform:uppercase; white-space:nowrap;">Shop ${c.name} →</a>
         </div>
-        <div class="grid">${DB.products.filter(p=>p.category===c).slice(0,4).map(productCard).join('')}</div>
+        <div class="grid">${DB.products.filter(p=>p.category===c.key).slice(0,4).map(productCard).join('')}</div>
       </div>
     `).join('')}
   </section>`;
@@ -728,7 +1019,7 @@ function viewShop(){
         </div>
         <div class="filter-group">
           <h4>MAX PRICE — <span class="mono">${fmt(state.filters.maxPrice)}</span></h4>
-          <input type="range" min="20" max="400" step="10" value="${state.filters.maxPrice}" oninput="setFilter('maxPrice', parseInt(this.value)); render()">
+          <input type="range" min="200" max="4000" step="100" value="${state.filters.maxPrice}" oninput="setFilter('maxPrice', parseInt(this.value)); render()">
         </div>
       </div>
       <div>
@@ -744,9 +1035,20 @@ function viewProduct(){
   if(!p) return `<section class="section wrap"><p>Product not found.</p></section>`;
   window.__selVariant = window.__selVariant || p.variants[0];
   window.__selQty = window.__selQty || 1;
+  window.__selImage = window.__selImage || 0;
+  const images = productImages(p);
   return `<section class="section wrap">
     <div class="pd-layout">
-      ${productMedia(p,'pd')}
+      <div>
+        ${productMedia(p,'pd',window.__selImage)}
+        ${images.length>1 ? `
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            ${images.map((url,idx)=>`
+              <div onclick="window.__selImage=${idx}; render()" style="width:56px; height:56px; border-radius:3px; overflow:hidden; cursor:pointer; border:2px solid ${window.__selImage===idx?'var(--accent)':'var(--line)'};">
+                <img src="${url}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.style.opacity='0.25'">
+              </div>`).join('')}
+          </div>` : ''}
+      </div>
       <div>
         <span class="eyebrow">${p.category}</span>
         <h1 class="pd-title">${p.name}</h1>
@@ -774,7 +1076,7 @@ function viewProduct(){
         <div style="margin-top:26px;">
           <div class="spec-line"><span>Category</span><span class="mono">${p.category}</span></div>
           <div class="spec-line"><span>SKU</span><span class="mono">${p.id}</span></div>
-          <div class="spec-line"><span>Shipping</span><span class="mono">Free over $75</span></div>
+          <div class="spec-line"><span>Shipping</span><span class="mono">Free over ₹999</span></div>
         </div>
       </div>
     </div>
@@ -800,7 +1102,7 @@ function viewCart(){
       <div>
         ${lines.map(l=>`
           <div class="cart-row">
-            <div class="cart-thumb" style="background:hsl(${l.product.hue} 35% 18%); color:hsl(${l.product.hue} 60% 60%);">${ICONS[l.product.category]}</div>
+            <div class="cart-thumb" style="background:hsl(${l.product.hue} 35% 18%); color:hsl(${l.product.hue} 60% 60%); overflow:hidden;">${productImages(l.product)[0] ? `<img src="${productImages(l.product)[0]}" style="width:100%; height:100%; object-fit:cover;" onerror="imgFallback(this,'${l.product.category}')">` : ICONS[l.product.category]}</div>
             <div>
               <div style="font-weight:600;">${l.product.name}</div>
               <div class="card-cat">Variant: ${l.variant}</div>
@@ -827,7 +1129,7 @@ function viewCart(){
         <div class="summary-line"><span>Subtotal</span><span class="mono">${fmt(t.subtotal)}</span></div>
         <div class="summary-line"><span>Discount</span><span class="mono">-${fmt(t.discount)}</span></div>
         <div class="summary-line"><span>Shipping</span><span class="mono">${t.shipping===0?'Free':fmt(t.shipping)}</span></div>
-        <div class="summary-line"><span>Tax (8%)</span><span class="mono">${fmt(t.tax)}</span></div>
+        <div class="summary-line"><span>GST (18%)</span><span class="mono">${fmt(t.tax)}</span></div>
         <div class="summary-line total"><span>Total</span><span>${fmt(t.total)}</span></div>
         <button class="btn btn-primary" style="width:100%; margin-top:16px;" onclick="nav('checkout')">Proceed to Checkout</button>
       </div>
@@ -901,12 +1203,78 @@ function viewConfirmation(){
       <p style="color:var(--ink-dim);">Confirmation sent to ${o.customer.email}</p>
       <div class="eyebrow" style="margin-top:18px;">ORDER ${o.id}</div>
       ${trailProgress(o.status)}
+      ${o.scratchReward ? `
+        <div class="eyebrow" style="margin-top:26px; color:var(--gold);">A REWARD IS WAITING FOR YOU</div>
+        <div class="scratch-card-wrap">
+          <div class="scratch-reveal">
+            <div>
+              <span class="eyebrow">YOUR REWARD</span>
+              <div class="scratch-code">${o.scratchReward.code}</div>
+              <div class="scratch-desc">${o.scratchReward.desc}</div>
+            </div>
+          </div>
+          <canvas id="scratchCanvas" width="320" height="170"></canvas>
+        </div>
+        <p style="font-size:11px; color:var(--ink-dim); margin-top:8px;">Scratch the card above to reveal a code for your next order</p>
+      ` : ''}
       <div style="display:flex; gap:12px; justify-content:center; margin-top:30px;">
         <button class="btn btn-outline" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
         <button class="btn btn-primary" onclick="nav('shop')">Continue Shopping</button>
       </div>
     </div>
   </section>`;
+}
+
+function initScratchCard(){
+  const canvas = document.getElementById('scratchCanvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const grad = ctx.createLinearGradient(0,0,w,h);
+  grad.addColorStop(0, '#3a4a34'); grad.addColorStop(1, '#20261c');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+  ctx.fillStyle = '#F4F5F7'; ctx.textAlign = 'center';
+  ctx.font = 'bold 16px Arial, sans-serif';
+  ctx.fillText('👆 SCRATCH HERE', w/2, h/2 - 6);
+  ctx.font = '11px Arial, sans-serif'; ctx.fillStyle = '#AEB8A8';
+  ctx.fillText('to reveal your reward', w/2, h/2 + 16);
+
+  let isDown = false, revealed = false;
+  function getPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    return {x:(cx-rect.left)*(w/rect.width), y:(cy-rect.top)*(h/rect.height)};
+  }
+  function scratchAt(x,y){
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(x,y,20,0,Math.PI*2); ctx.fill();
+  }
+  function checkProgress(){
+    if(revealed) return;
+    const data = ctx.getImageData(0,0,w,h).data;
+    let cleared = 0, sampled = 0;
+    for(let i=3;i<data.length;i+=4*25){ sampled++; if(data[i]<50) cleared++; }
+    if(sampled && cleared/sampled > 0.4){
+      revealed = true;
+      canvas.style.transition = 'opacity .4s';
+      canvas.style.opacity = '0';
+      setTimeout(()=>{ if(canvas.parentNode) canvas.remove(); }, 400);
+    }
+  }
+  function onMove(e){
+    if(!isDown) return;
+    e.preventDefault();
+    const {x,y} = getPos(e);
+    scratchAt(x,y);
+    checkProgress();
+  }
+  canvas.addEventListener('mousedown', e=>{ isDown=true; const {x,y}=getPos(e); scratchAt(x,y); });
+  window.addEventListener('mouseup', ()=> isDown=false);
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('touchstart', e=>{ isDown=true; const {x,y}=getPos(e); scratchAt(x,y); e.preventDefault(); }, {passive:false});
+  canvas.addEventListener('touchend', ()=> isDown=false);
+  canvas.addEventListener('touchmove', onMove, {passive:false});
 }
 
 function viewOrders(){
@@ -945,6 +1313,58 @@ async function findMyOrders(){
 }
 
 /* ============================================================
+   VIEWS — CUSTOMER ACCOUNT
+============================================================ */
+function orderCard(o){
+  return `<div class="panel" style="margin-top:14px;">
+    <div class="toolbar"><div><strong>${o.id}</strong> <span class="card-cat">· ${new Date(o.date).toLocaleDateString()}</span></div>
+      <span class="status-pill status-${o.status.replace(/ /g,'-')}">${o.status}</span></div>
+    ${trailProgress(o.status)}
+    <div style="margin-top:14px;">
+      ${o.items.map(it=>`<div class="summary-line"><span>${it.name} × ${it.qty}</span><span class="mono">${fmt(it.price*it.qty)}</span></div>`).join('')}
+      <div class="summary-line total"><span>Total</span><span>${fmt(o.total)}</span></div>
+    </div>
+    <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
+  </div>`;
+}
+function viewAccount(){
+  if(state.customer){
+    const orders = [...(state.myAccountOrders || [])].sort((a,b) => new Date(b.date) - new Date(a.date));
+    return `<section class="section wrap" style="max-width:560px;">
+      <div class="section-head"><h2>My Account</h2></div>
+      <div class="panel">
+        <p style="font-weight:600; font-size:16px;">${state.customer.name}</p>
+        <p class="card-cat" style="margin-top:4px;">${state.customer.email}</p>
+        <button class="btn btn-outline btn-sm" style="margin-top:14px;" onclick="customerLogout()">Log Out</button>
+      </div>
+      <div class="section-head" style="margin-top:30px;">
+        <h3 style="font-size:18px;">My Orders ${orders.length ? `<span style="color:var(--ink-dim); font-size:13px; font-weight:400;">(${orders.length})</span>` : ''}</h3>
+      </div>
+      ${state.myAccountOrdersLoading
+        ? `<p style="color:var(--ink-dim); margin-top:10px;">Loading your orders…</p>`
+        : (orders.length ? orders.map(orderCard).join('') : `<p style="color:var(--ink-dim); margin-top:10px;">No orders yet — <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); nav('shop')">start shopping</a>.</p>`)}
+    </section>`;
+  }
+  const f = state.accountForm;
+  const mode = state.accountMode;
+  const field = (label,key,type='text') => `<div class="field"><label>${label}</label><input type="${type}" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"></div>`;
+  return `<section class="section wrap" style="max-width:420px;">
+    <div class="section-head"><h2>${mode==='signup' ? 'Create Account' : 'Log In'}</h2></div>
+    <div class="panel">
+      ${mode==='signup' ? field('Full Name','name') : ''}
+      ${field('Email','email','email')}
+      ${field('Password','password','password')}
+      <button class="btn btn-primary" style="width:100%; margin-top:6px;" onclick="${mode==='signup'?'customerSignup()':'customerLogin()'}">${mode==='signup' ? 'Create Account' : 'Log In'}</button>
+      <p style="font-size:12px; color:var(--ink-dim); margin-top:16px; text-align:center;">
+        ${mode==='signup'
+          ? `Already have an account? <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); state.accountMode='login'; render()">Log in</a>`
+          : `New to Vantura? <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); state.accountMode='signup'; render()">Create an account</a>`}
+      </p>
+    </div>
+  </section>`;
+}
+
+/* ============================================================
    VIEWS — ADMIN
 ============================================================ */
 function viewAdminLogin(){
@@ -977,9 +1397,14 @@ function adminSidebar(){
   return `<div class="admin-side">
     ${item('dashboard','Dashboard')}
     ${item('products','Products')}
+    ${item('collections','Collections')}
     ${item('orders','Orders')}
     ${item('customers','Customers')}
     ${item('coupons','Coupons')}
+    ${item('scratch','Scratch Cards')}
+    ${item('announcement','Announcement Bar')}
+    <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
+    <a href="#" onclick="event.preventDefault(); exportToExcel()" style="color:var(--gold);">⬇ Export to Excel</a>
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
     <a href="#" onclick="event.preventDefault(); nav('home')">← View Store</a>
     <a href="#" onclick="event.preventDefault(); adminLogout()" style="color:var(--danger);">Log Out</a>
@@ -988,8 +1413,41 @@ function adminSidebar(){
 
 function adminDashboard(){
   const orders = DB.orders;
+  const now = new Date();
+  const daysAgo = n => { const d = new Date(now); d.setDate(d.getDate()-n); return d; };
   const revenue = orders.reduce((s,o)=>s+o.total,0);
   const avgOrder = orders.length? revenue/orders.length : 0;
+
+  const thisWeekStart = daysAgo(7);
+  const lastWeekStart = daysAgo(14);
+  const thisWeekOrders = orders.filter(o => new Date(o.date) >= thisWeekStart);
+  const lastWeekOrders = orders.filter(o => { const d = new Date(o.date); return d >= lastWeekStart && d < thisWeekStart; });
+  const thisWeekRevenue = thisWeekOrders.reduce((s,o)=>s+o.total,0);
+  const lastWeekRevenue = lastWeekOrders.reduce((s,o)=>s+o.total,0);
+  const revenueGrowth = lastWeekRevenue > 0 ? ((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue * 100) : (thisWeekRevenue>0 ? 100 : 0);
+
+  const thisWeekCustomers = DB.customers.filter(c => c.since && new Date(c.since) >= thisWeekStart).length;
+  const lastWeekCustomers = DB.customers.filter(c => c.since && new Date(c.since) >= lastWeekStart && new Date(c.since) < thisWeekStart).length;
+  const customerGrowth = lastWeekCustomers > 0 ? ((thisWeekCustomers - lastWeekCustomers) / lastWeekCustomers * 100) : (thisWeekCustomers>0 ? 100 : 0);
+
+  const customerOrderCounts = {};
+  orders.forEach(o => { customerOrderCounts[o.customer.email] = (customerOrderCounts[o.customer.email]||0)+1; });
+  const repeatCustomers = Object.values(customerOrderCounts).filter(c=>c>1).length;
+  const totalOrderingCustomers = Object.keys(customerOrderCounts).length;
+  const repeatRate = totalOrderingCustomers ? (repeatCustomers/totalOrderingCustomers*100) : 0;
+
+  const statuses = ['Processing','Shipped','Out for Delivery','Delivered','Cancelled'];
+  const statusCounts = statuses.map(s => ({status:s, count: orders.filter(o=>o.status===s).length}));
+
+  const catRevenue = {};
+  orders.forEach(o => o.items.forEach(it=>{
+    const p = DB.products.find(pp=>pp.id===it.id);
+    const cat = p ? p.category : 'Other';
+    catRevenue[cat] = (catRevenue[cat]||0) + it.price*it.qty;
+  }));
+  const catRevenueArr = Object.entries(catRevenue).sort((a,b)=>b[1]-a[1]);
+  const maxCatRevenue = Math.max(...catRevenueArr.map(c=>c[1]), 1);
+
   const last7 = [...Array(7)].map((_,i)=>{
     const d = new Date(); d.setDate(d.getDate()-(6-i));
     const dayRev = orders.filter(o=> new Date(o.date).toDateString()===d.toDateString()).reduce((s,o)=>s+o.total,0);
@@ -1001,18 +1459,47 @@ function adminDashboard(){
     return {...p, sold};
   }).sort((a,b)=>b.sold-a.sold).slice(0,5);
 
+  const growthBadge = (pct) => {
+    const up = pct >= 0;
+    return `<span style="color:${up?'var(--ok)':'var(--danger)'};">${up?'▲':'▼'} ${Math.abs(pct).toFixed(0)}%</span>`;
+  };
+
   return `
   <div class="kpi-row">
     <div class="kpi"><span class="eyebrow">Total Revenue</span><div class="val">${fmt(revenue)}</div><div class="delta">${orders.length} orders lifetime</div></div>
+    <div class="kpi"><span class="eyebrow">This Week Revenue</span><div class="val">${fmt(thisWeekRevenue)}</div><div class="delta">${growthBadge(revenueGrowth)} vs last week</div></div>
+    <div class="kpi"><span class="eyebrow">New Customers (7d)</span><div class="val">${thisWeekCustomers}</div><div class="delta">${growthBadge(customerGrowth)} vs last week</div></div>
+    <div class="kpi"><span class="eyebrow">Repeat Customer Rate</span><div class="val">${repeatRate.toFixed(0)}%</div><div class="delta">${repeatCustomers} of ${totalOrderingCustomers} customers</div></div>
+  </div>
+  <div class="kpi-row">
     <div class="kpi"><span class="eyebrow">Orders</span><div class="val">${orders.length}</div><div class="delta">${orders.filter(o=>o.status==='Processing').length} processing</div></div>
-    <div class="kpi"><span class="eyebrow">Customers</span><div class="val">${DB.customers.length}</div><div class="delta">Across all channels</div></div>
     <div class="kpi"><span class="eyebrow">Avg. Order Value</span><div class="val">${fmt(avgOrder)}</div><div class="delta">Per completed order</div></div>
+    <div class="kpi"><span class="eyebrow">Total Customers</span><div class="val">${DB.customers.length}</div><div class="delta">Across all channels</div></div>
+    <div class="kpi"><span class="eyebrow">Products Listed</span><div class="val">${DB.products.length}</div><div class="delta">${DB.products.filter(p=>p.stock<=0).length} out of stock</div></div>
   </div>
   <div class="panel">
     <h3>Revenue — Last 7 Days</h3>
     <div class="bar-chart">
       ${last7.map(d=>`<div class="bar-col"><div class="bar" style="height:${Math.max(4,(d.val/maxVal)*130)}px;" title="${fmt(d.val)}"></div><div class="bar-label">${d.label}</div></div>`).join('')}
     </div>
+  </div>
+  <div class="panel">
+    <h3>Revenue by Category</h3>
+    ${catRevenueArr.length ? catRevenueArr.map(([cat,rev])=>`
+      <div style="margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;"><span>${cat}</span><span class="mono">${fmt(rev)}</span></div>
+        <div style="background:var(--surface-2); border-radius:3px; height:8px; overflow:hidden;"><div style="background:var(--accent); height:100%; width:${(rev/maxCatRevenue*100)}%;"></div></div>
+      </div>
+    `).join('') : `<p style="color:var(--ink-dim); font-size:13px;">No sales yet.</p>`}
+  </div>
+  <div class="panel">
+    <h3>Orders by Status</h3>
+    ${statusCounts.map(s=>`
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
+        <span class="status-pill status-${s.status.replace(/ /g,'-')}">${s.status}</span>
+        <span class="mono">${s.count} order${s.count!==1?'s':''}</span>
+      </div>
+    `).join('')}
   </div>
   <div class="panel">
     <h3>Top Selling Products</h3>
@@ -1082,6 +1569,98 @@ function adminCustomers(){
   </div>`;
 }
 
+function adminCollections(){
+  return `<div class="toolbar">
+    <h2 style="font-size:22px;">Collections (${(DB.collections||[]).length})</h2>
+    <button class="btn btn-primary btn-sm" onclick="openCollectionModal(null)">+ Add Collection</button>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Name</th><th>Description</th><th>Products</th><th></th></tr></thead>
+    <tbody>${(DB.collections||[]).map(c=>`
+      <tr>
+        <td>${c.name}</td>
+        <td style="max-width:320px;">${c.desc || '—'}</td>
+        <td class="mono">${DB.products.filter(p=>p.category===c.key).length}</td>
+        <td><button class="btn-ghost" onclick="openCollectionModal('${c.key}')">Edit</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCollection('${c.key}')">Delete</button></td>
+      </tr>`).join('')}</tbody></table>
+  </div>
+  <p style="font-size:11px; color:var(--ink-dim); margin-top:12px;">A collection's name is also the "Category" you'll pick when adding a product, so it appears grouped correctly.</p>`;
+}
+function openCollectionModal(key){
+  const data = key ? {...(DB.collections||[]).find(c=>c.key===key)} : {key:null, name:'', desc:'', image:'', _isNew:true};
+  state.modal = {type:'collection', data};
+  render();
+}
+async function saveCollectionModal(){
+  const d = state.modal.data;
+  if(!d.name){ showToast('Collection name is required'); return; }
+  try{
+    if(d._isNew){
+      await apiFetch('/collections', {method:'POST', body:JSON.stringify({name:d.name, desc:d.desc, image:d.image})});
+    } else {
+      await apiFetch('/collections/' + encodeURIComponent(d.key), {method:'PUT', body:JSON.stringify({name:d.name, desc:d.desc, image:d.image})});
+    }
+    DB.collections = await apiFetch('/collections');
+    state.modal = null; showToast('Collection saved'); render();
+  } catch(err){ showToast(err.message || 'Could not save collection'); }
+}
+async function deleteCollection(key){
+  if(!confirm('Delete this collection? Existing products keep their category, but it will no longer show as a browsable collection.')) return;
+  try{
+    await apiFetch('/collections/' + encodeURIComponent(key), {method:'DELETE'});
+    DB.collections = DB.collections.filter(c=>c.key!==key);
+    showToast('Collection deleted'); render();
+  } catch(err){ showToast(err.message || 'Could not delete collection'); }
+}
+
+function adminScratchCards(){
+  return `<div class="toolbar"><h2 style="font-size:22px;">Scratch Cards</h2></div>
+  <div class="panel">
+    <p style="color:var(--ink-dim); font-size:13px;">Right after a customer places an order, they see a scratch card that reveals one randomly-picked reward. Toggle which coupons are allowed to appear as scratch card rewards below.</p>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Code</th><th>Reward</th><th>Status</th><th>In Scratch Card Pool</th></tr></thead>
+    <tbody>${DB.coupons.map(c=>`
+      <tr>
+        <td class="mono">${c.code}</td>
+        <td>${c.desc}</td>
+        <td>${c.active?'<span class="status-pill status-Delivered">Active</span>':'<span class="status-pill status-Cancelled">Off</span>'}</td>
+        <td><label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" ${c.scratchEligible?'checked':''} onchange="toggleScratchEligible('${c.code}', this.checked)"> ${c.scratchEligible ? 'Yes' : 'No'}
+        </label></td>
+      </tr>`).join('')}</tbody></table>
+  </div>
+  ${!DB.coupons.some(c=>c.scratchEligible && c.active) ? `<p style="font-size:11px; color:var(--gold); margin-top:12px;">No active coupons are in the pool right now — customers won't see a scratch card until at least one is enabled.</p>` : ''}`;
+}
+async function toggleScratchEligible(code, checked){
+  try{
+    await apiFetch('/coupons/' + encodeURIComponent(code), {method:'PUT', body:JSON.stringify({scratchEligible: checked})});
+    DB.coupons = await apiFetch('/coupons');
+    showToast(checked ? 'Added to scratch card pool' : 'Removed from scratch card pool');
+    render();
+  } catch(err){ showToast(err.message || 'Could not update'); render(); }
+}
+
+function adminAnnouncement(){
+  const a = DB.announcement || {text:'', active:false};
+  return `<div class="toolbar"><h2 style="font-size:22px;">Announcement Bar</h2></div>
+  <div class="panel" style="max-width:520px;">
+    <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px;">This message shows in a thin bar at the very top of the site, above the header — good for offers like free delivery on a first order.</p>
+    <div class="field"><label>Message</label><textarea rows="2" id="announceText" placeholder="e.g. Free delivery on your first order!">${a.text}</textarea></div>
+    <div class="field"><label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--ink);"><input type="checkbox" id="announceActive" ${a.active?'checked':''} style="width:auto;">Show this bar on the site</label></div>
+    <button class="btn btn-primary" onclick="saveAnnouncement()">Save Changes</button>
+  </div>`;
+}
+async function saveAnnouncement(){
+  const text = document.getElementById('announceText').value;
+  const active = document.getElementById('announceActive').checked;
+  try{
+    DB.announcement = await apiFetch('/announcement', {method:'PUT', body:JSON.stringify({text, active})});
+    showToast('Announcement bar updated');
+    render();
+  } catch(err){ showToast(err.message || 'Could not save announcement'); }
+}
+
 function adminCoupons(){
   return `<div class="toolbar">
     <h2 style="font-size:22px;">Coupons (${DB.coupons.length})</h2>
@@ -1102,7 +1681,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons};
+  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -1113,11 +1692,27 @@ function modalHtml(){
   if(!state.modal) return '';
   if(state.modal.type==='product'){
     const d = state.modal.data;
-    const categories = ['Electronics','Watches','Home Decor','Kitchen'];
+    const categories = (DB.collections && DB.collections.length) ? DB.collections.map(c=>c.key) : ['Electronics','Watches','Home Decor','Kitchen'];
     return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
       <div class="modal">
         <h3>${d.id?'Edit Product':'Add Product'}</h3>
         <div class="field"><label>Name</label><input type="text" value="${d.name}" oninput="state.modal.data.name=this.value"></div>
+        <div class="field">
+          <label>Product Images <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional — first image is the main photo; leave empty to use the icon tile)</span></label>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="newImageUrlInput" placeholder="https://images.example.com/photo.jpg" onkeydown="if(event.key==='Enter'){ event.preventDefault(); addImageToModal(); }">
+            <button type="button" class="btn btn-outline btn-sm" style="white-space:nowrap;" onclick="addImageToModal()">+ Add</button>
+          </div>
+          ${(d.images && d.images.length) ? `
+            <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:12px;">
+              ${d.images.map((url,idx)=>`
+                <div style="position:relative; width:72px; height:72px; border-radius:4px; overflow:hidden; border:1px solid var(--line); ${idx===0?'outline:2px solid var(--accent);':''}">
+                  <img src="${url}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.style.opacity='0.25'">
+                  <button type="button" title="Remove image" onclick="removeImageFromModal(${idx})" style="position:absolute; top:2px; right:2px; background:rgba(0,0,0,.75); color:#fff; border:0; border-radius:50%; width:18px; height:18px; font-size:12px; line-height:1; cursor:pointer;">×</button>
+                  ${idx===0?`<span style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.7); color:var(--accent); font-size:9px; text-align:center; padding:2px 0; text-transform:uppercase; letter-spacing:.04em;">Main</span>`:''}
+                </div>`).join('')}
+            </div>` : `<p style="font-size:11px; color:var(--ink-dim); margin-top:8px;">No images added yet.</p>`}
+        </div>
         <div class="form-grid">
           <div class="field"><label>Category</label><select onchange="state.modal.data.category=this.value">${categories.map(c=>`<option ${d.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
           <div class="field"><label>Stock</label><input type="number" value="${d.stock}" oninput="state.modal.data.stock=this.value"></div>
@@ -1166,10 +1761,16 @@ function modalHtml(){
 /* ============================================================
    MASTER RENDER
 ============================================================ */
+function announceBar(){
+  if(!DB.announcement || !DB.announcement.active || !DB.announcement.text || state.announceDismissed) return '';
+  return `<div class="announce-bar">${DB.announcement.text}<span class="close-x" onclick="state.announceDismissed=true; render()">✕</span></div>`;
+}
+
 function render(){
   const views = {
     home:viewHome, shop:viewShop, collections:viewCollections, product:viewProduct,
     cart:viewCart, checkout:viewCheckout, confirmation:viewConfirmation, orders:viewOrders,
+    account:viewAccount,
     'admin-login':viewAdminLogin, admin:viewAdmin,
   };
   const isAdminChrome = state.view==='admin' || (state.view==='admin-login');
@@ -1177,12 +1778,19 @@ function render(){
   if(isAdminChrome){
     html = views[state.view]();
   } else {
-    html = header() + (views[state.view]?views[state.view]():viewHome()) + footer();
+    html = announceBar() + header() + (views[state.view]?views[state.view]():viewHome()) + footer();
   }
   document.getElementById('app').innerHTML = html + modalHtml() + toast();
+  if(state.view==='confirmation'){
+    const o = DB.orders.find(o=>o.id===state.lastOrderId);
+    if(o && o.scratchReward) initScratchCard();
+  }
 }
 
+restoreCart();
+restoreAuth();
 loadCatalog();
+refreshCartFromServer();
 </script>
 </body>
 </html>

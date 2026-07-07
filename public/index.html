@@ -1382,8 +1382,8 @@ async function adminLogin(){
     const data = await apiFetch('/admin/login', {method:'POST', body:JSON.stringify({password:val})});
     authToken = data.token;
     state.isAdmin = true;
-    const [orders, customers] = await Promise.all([apiFetch('/orders'), apiFetch('/customers')]);
-    DB.orders = orders; DB.customers = customers;
+    const [orders, customers, collections] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections;
     nav('admin');
   } catch(err){ showToast(err.message || 'Incorrect password'); }
 }
@@ -1570,24 +1570,31 @@ function adminCustomers(){
 }
 
 function adminCollections(){
+  // same union logic as the storefront's Collections page, so admin sees everything that's actually live
+  const productCats = [...new Set(DB.products.map(p=>p.category))];
+  const known = new Set((DB.collections||[]).map(c=>c.key));
+  const extra = productCats.filter(c => !known.has(c)).map(c => ({key:c, name:c, desc:'', image:'', _unmanaged:true}));
+  const collections = [...(DB.collections||[]), ...extra];
   return `<div class="toolbar">
-    <h2 style="font-size:22px;">Collections (${(DB.collections||[]).length})</h2>
+    <h2 style="font-size:22px;">Collections (${collections.length})</h2>
     <button class="btn btn-primary btn-sm" onclick="openCollectionModal(null)">+ Add Collection</button>
   </div>
   <div class="panel" style="padding:0;">
     <table><thead><tr><th>Name</th><th>Description</th><th>Products</th><th></th></tr></thead>
-    <tbody>${(DB.collections||[]).map(c=>`
+    <tbody>${collections.map(c=>`
       <tr>
-        <td>${c.name}</td>
+        <td>${c.name} ${c._unmanaged?'<span style="font-size:10px; color:var(--gold); border:1px solid var(--gold); border-radius:10px; padding:2px 8px; margin-left:6px;">Not configured</span>':''}</td>
         <td style="max-width:320px;">${c.desc || '—'}</td>
         <td class="mono">${DB.products.filter(p=>p.category===c.key).length}</td>
-        <td><button class="btn-ghost" onclick="openCollectionModal('${c.key}')">Edit</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCollection('${c.key}')">Delete</button></td>
+        <td>${c._unmanaged
+          ? `<button class="btn-ghost" onclick="openCollectionModal(null, '${c.key}')">+ Add Details</button>`
+          : `<button class="btn-ghost" onclick="openCollectionModal('${c.key}')">Edit</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCollection('${c.key}')">Delete</button>`}</td>
       </tr>`).join('')}</tbody></table>
   </div>
-  <p style="font-size:11px; color:var(--ink-dim); margin-top:12px;">A collection's name is also the "Category" you'll pick when adding a product, so it appears grouped correctly.</p>`;
+  <p style="font-size:11px; color:var(--ink-dim); margin-top:12px;">A collection's name is also the "Category" you'll pick when adding a product, so it appears grouped correctly. Collections marked "Not configured" already have products using that category, but haven't been given a description yet.</p>`;
 }
-function openCollectionModal(key){
-  const data = key ? {...(DB.collections||[]).find(c=>c.key===key)} : {key:null, name:'', desc:'', image:'', _isNew:true};
+function openCollectionModal(key, prefillName){
+  const data = key ? {...(DB.collections||[]).find(c=>c.key===key)} : {key:null, name:prefillName||'', desc:'', image:'', _isNew:true};
   state.modal = {type:'collection', data};
   render();
 }
@@ -1750,6 +1757,21 @@ function modalHtml(){
         <div class="field"><label>Description</label><input type="text" value="${d.desc||''}" oninput="state.modal.data.desc=this.value"></div>
         <div style="display:flex; gap:10px; margin-top:16px;">
           <button class="btn btn-primary" onclick="saveCouponModal()">Save Coupon</button>
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  if(state.modal.type==='collection'){
+    const d = state.modal.data;
+    return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>${d._isNew ? 'Add Collection' : 'Edit Collection'}</h3>
+        <div class="field"><label>Name</label><input type="text" value="${d.name}" oninput="state.modal.data.name=this.value"></div>
+        <div class="field"><label>Description</label><textarea rows="3" oninput="state.modal.data.desc=this.value">${d.desc||''}</textarea></div>
+        <div class="field"><label>Image URL <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="text" placeholder="https://images.example.com/photo.jpg" value="${d.image||''}" oninput="state.modal.data.image=this.value"></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" onclick="saveCollectionModal()">Save Collection</button>
           <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
         </div>
       </div>

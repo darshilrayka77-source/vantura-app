@@ -61,6 +61,7 @@ const SEED = {
   announcement: {text:'🎉 Free delivery on your first order — no code needed!', active:true},
   orders: [],
   customers: [],
+  reviews: [],
 };
 
 /* ============================================================
@@ -163,11 +164,18 @@ function send(res, status, body){
   });
   res.end(json);
 }
+const MAX_BODY_SIZE = 8 * 1024 * 1024; // 8MB — generous for a compressed review photo, small enough to stay safe
 function readBody(req){
   return new Promise((resolve, reject) => {
     let chunks = '';
-    req.on('data', c => chunks += c);
+    let tooLarge = false;
+    req.on('data', c => {
+      if(tooLarge) return;
+      chunks += c;
+      if(chunks.length > MAX_BODY_SIZE){ tooLarge = true; reject({status:413, message:'Upload is too large'}); }
+    });
     req.on('end', () => {
+      if(tooLarge) return;
       if(!chunks) return resolve({});
       try { resolve(JSON.parse(chunks)); } catch(e){ reject(e); }
     });
@@ -416,6 +424,46 @@ const server = http.createServer(async (req, res) => {
       if(body.status) order.status = body.status;
       await saveDb();
       return send(res, 200, order);
+    }
+
+    /* ---------- REVIEWS ---------- */
+    if(pathname === '/api/reviews' && req.method === 'GET'){
+      const productId = parsed.searchParams.get('productId');
+      const category = parsed.searchParams.get('category');
+      let list = db.reviews || [];
+      if(productId) list = list.filter(r => r.productId === productId);
+      if(category) list = list.filter(r => r.category === category);
+      return send(res, 200, list);
+    }
+    if(pathname === '/api/reviews' && req.method === 'POST'){
+      const body = await readBody(req);
+      if(!body.productId || !body.rating) return send(res, 400, {message:'A product and star rating are required'});
+      const product = db.products.find(p => p.id === body.productId);
+      if(!product) return send(res, 404, {message:'Product not found'});
+      const rating = Math.min(5, Math.max(1, parseInt(body.rating) || 0));
+      if(body.image && typeof body.image === 'string' && body.image.length > 2 * 1024 * 1024){
+        return send(res, 413, {message:'That photo is too large — please use a smaller image'});
+      }
+      const review = {
+        id: uid('RV'), productId: product.id, productName: product.name, category: product.category,
+        customerName: (body.customerName || 'Anonymous').slice(0, 80),
+        customerEmail: body.customerEmail || '',
+        rating, text: (body.text || '').slice(0, 2000),
+        image: body.image || '',
+        date: new Date().toISOString(),
+      };
+      if(!db.reviews) db.reviews = [];
+      db.reviews.unshift(review);
+      await saveDb();
+      return send(res, 201, review);
+    }
+    if(parts[1] === 'reviews' && parts[2] && req.method === 'DELETE'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const before = (db.reviews || []).length;
+      db.reviews = (db.reviews || []).filter(r => r.id !== parts[2]);
+      if(db.reviews.length === before) return send(res, 404, {message:'Review not found'});
+      await saveDb();
+      return send(res, 200, {deleted:true});
     }
 
     /* ---------- CUSTOMERS (admin only) ---------- */

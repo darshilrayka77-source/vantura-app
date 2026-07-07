@@ -244,7 +244,15 @@ footer.site{border-top:1px solid var(--line); padding:40px 24px; margin-top:40px
   .kpi-row{grid-template-columns:repeat(2,1fr);}
   .foot-grid{grid-template-columns:1fr 1fr;}
   nav.mainnav{display:none;}
+  .hamburger-btn{display:flex !important;}
+  .searchbox{order:4; max-width:100%; flex-basis:100%; margin-top:10px;}
+  .headbar{flex-wrap:wrap;}
 }
+.hamburger-btn{display:none; background:none; border:0; color:var(--ink); padding:6px; cursor:pointer;}
+.mobile-nav{display:none; flex-direction:column; border-top:1px solid var(--line); background:var(--surface);}
+.mobile-nav.open{display:flex;}
+.mobile-nav a{padding:14px 24px; font-size:14px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-dim); border-bottom:1px solid var(--line);}
+.mobile-nav a.active{color:var(--accent);}
 </style>
 </head>
 <body>
@@ -260,6 +268,8 @@ const ICONS = {
   "Home Decor": `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 30c-4-6-4-12 0-18 4 6 8 6 12 0 4 6 4 12 0 18z"/><path d="M24 30v12M17 42h14"/></svg>`,
   Kitchen: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 6v14a4 4 0 0 0 4 4v18"/><path d="M14 6v10M18 6v10"/><path d="M32 6c-4 0-6 4-6 9s2 9 6 9v18"/></svg>`
 };
+const ICON_FALLBACK = `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="8" y="16" width="32" height="24" rx="3"/><path d="M8 22h32"/><path d="M18 16v-4a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v4"/></svg>`;
+function getIcon(cat){ return ICONS[cat] || ICON_FALLBACK; }
 const HERO_ICON = `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M24 5 41 14v18L24 41 7 32V14z"/><path d="M7 14l17 9 17-9M24 23v18"/></svg>`;
 
 /* ============================================================
@@ -277,6 +287,7 @@ const DB = {
   orders: [],
   customers: [],
   collections: [],
+  reviews: [],
   announcement: {text:'', active:false},
 };
 
@@ -354,6 +365,11 @@ const state = {
   accountForm:{name:'', email:'', password:''},
   myAccountOrders:[],
   myAccountOrdersLoading:false,
+  productReviews:[],
+  productReviewsLoading:false,
+  reviewDraft:{rating:5, text:'', image:null, name:''},
+  adminReviewCategory:'All',
+  mobileMenuOpen:false,
   announceDismissed:false,
 };
 
@@ -390,8 +406,10 @@ function restoreAuth(){
 }
 
 function nav(view, extra={}){
+  state.mobileMenuOpen = false;
   if(view==='product' && extra.productId !== state.productId){
     window.__selVariant = null; window.__selQty = 1; window.__selImage = 0;
+    state.reviewDraft = {rating:5, text:'', image:null, name: state.customer ? state.customer.name : ''};
   }
   Object.assign(state, {view}, extra);
   window.scrollTo(0,0);
@@ -402,6 +420,7 @@ function nav(view, extra={}){
     apiFetch('/products').then(products => { DB.products = products; render(); }).catch(()=>{});
   }
   if(view==='account' && state.customer){ state.myAccountOrdersLoading = true; loadMyAccountOrders(); }
+  if(view==='product' && extra.productId){ state.productReviewsLoading = true; state.productReviews = []; loadProductReviews(extra.productId); }
 }
 function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
 const fmt = n => new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:0}).format(n);
@@ -707,6 +726,84 @@ function exportToExcel(){
   }
 }
 
+async function loadProductReviews(productId){
+  try{
+    const reviews = await apiFetch('/reviews?productId=' + encodeURIComponent(productId));
+    state.productReviews = reviews;
+    state.productReviewsLoading = false;
+    render();
+  } catch(err){ state.productReviews = []; state.productReviewsLoading = false; render(); }
+}
+function compressImageFile(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 640;
+        let w = img.width, h = img.height;
+        if(w > maxDim || h > maxDim){
+          if(w > h){ h = Math.round(h * maxDim / w); w = maxDim; }
+          else { w = Math.round(w * maxDim / h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = () => reject(new Error('Could not read that image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Could not read that file'));
+    reader.readAsDataURL(file);
+  });
+}
+async function pickReviewImage(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Please choose an image file'); return; }
+  try{
+    state.reviewDraft.image = await compressImageFile(file);
+    render();
+  } catch(err){ showToast(err.message || 'Could not read that image'); }
+}
+function removeReviewImage(){ state.reviewDraft.image = null; render(); }
+function setReviewRating(n){ state.reviewDraft.rating = n; render(); }
+async function submitReview(productId){
+  const draft = state.reviewDraft;
+  const name = state.customer ? state.customer.name : (draft.name || '').trim();
+  if(!name){ showToast('Please enter your name'); return; }
+  if(!draft.text || !draft.text.trim()){ showToast('Please write a short review'); return; }
+  try{
+    const review = await apiFetch('/reviews', {method:'POST', body:JSON.stringify({
+      productId, rating: draft.rating, text: draft.text.trim(), image: draft.image || '',
+      customerName: name, customerEmail: state.customer ? state.customer.email : '',
+    })});
+    state.productReviews = [review, ...state.productReviews];
+    state.reviewDraft = {rating:5, text:'', image:null, name: state.customer ? state.customer.name : ''};
+    showToast('Thanks for your review!');
+    render();
+  } catch(err){ showToast(err.message || 'Could not submit your review'); }
+}
+function reviewStars(n, clickable){
+  return `<div style="display:flex; gap:4px; font-size:${clickable?'26px':'14px'};">
+    ${[1,2,3,4,5].map(i=>`<span ${clickable?`onclick="setReviewRating(${i})" style="cursor:pointer; color:${i<=n?'var(--gold)':'var(--line)'};"`:`style="color:${i<=n?'var(--gold)':'var(--line)'};"`}>★</span>`).join('')}
+  </div>`;
+}
+function reviewCard(r){
+  return `<div class="panel" style="margin-top:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+      <div>
+        <div style="font-weight:600; font-size:14px;">${r.customerName}</div>
+        <div style="margin-top:4px;">${reviewStars(r.rating,false)}</div>
+      </div>
+      <span class="card-cat">${new Date(r.date).toLocaleDateString()}</span>
+    </div>
+    ${r.text ? `<p style="margin-top:10px; font-size:13px; color:var(--ink-dim);">${r.text}</p>` : ''}
+    ${r.image ? `<img src="${r.image}" style="margin-top:12px; max-width:160px; border-radius:4px; display:block;">` : ''}
+  </div>`;
+}
+
 function loadImageDataUrl(url){
   return new Promise((resolve) => {
     if(!url){ resolve(null); return; }
@@ -807,7 +904,7 @@ function productImages(p){
   return [];
 }
 function productMedia(p, size='card', imgIndex=0){
-  const icon = ICONS[p.category] || ICONS.Backpacks;
+  const icon = getIcon(p.category);
   const low = p.stock>0 && p.stock<=8;
   const out = p.stock<=0;
   const cls = size==='card' ? 'card-media' : 'pd-media';
@@ -831,7 +928,7 @@ function imgFallback(imgEl, category){
   if(!parent) return;
   parent.style.background = 'var(--surface-2)';
   parent.style.color = 'var(--ink-dim)';
-  parent.innerHTML = (ICONS[category] || ICONS.Electronics);
+  parent.innerHTML = getIcon(category);
 }
 function stars(r){ const full = Math.round(r); return '★'.repeat(full)+'☆'.repeat(5-full); }
 
@@ -855,6 +952,9 @@ function header(){
   return `
   <header class="site">
     <div class="headbar">
+      <button class="hamburger-btn" onclick="toggleMobileMenu()" aria-label="Menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
       <div class="logo" onclick="nav('home')"><span class="mark">▣</span> VANTURA</div>
       <nav class="mainnav">
         ${link('home','Home')}
@@ -877,9 +977,17 @@ function header(){
         </button>
       </div>
     </div>
+    <nav class="mobile-nav ${state.mobileMenuOpen?'open':''}">
+      ${link('home','Home')}
+      ${link('shop','Shop')}
+      ${link('collections','Collections')}
+      ${link('account', state.customer ? `My Account (${state.customer.name.split(' ')[0]})` : 'Account')}
+      ${link('orders','Track Order')}
+    </nav>
     <div class="topo-divider"></div>
   </header>`;
 }
+function toggleMobileMenu(){ state.mobileMenuOpen = !state.mobileMenuOpen; render(); }
 
 function footer(){
   return `
@@ -916,7 +1024,10 @@ function toast(){
 ============================================================ */
 function viewHome(){
   const featured = DB.products.filter(p=>p.featured);
-  const categories = [...new Set(DB.products.map(p=>p.category))];
+  const productCats = [...new Set(DB.products.map(p=>p.category))];
+  const known = new Set((DB.collections||[]).map(c=>c.key));
+  const extraCats = productCats.filter(c => !known.has(c)).map(c => ({key:c, name:c}));
+  const categories = [...(DB.collections||[]).map(c=>({key:c.key, name:c.name})), ...extraCats];
   return `
   <section class="hero">
     <div class="hero-inner">
@@ -948,9 +1059,9 @@ function viewHome(){
     <div class="section-head"><h2>Shop by Collection</h2></div>
     <div class="grid">
       ${categories.map(c=>`
-        <div class="card" onclick="setFilter('category','${c}'); nav('shop')" style="text-align:center;">
-          <div class="card-media" style="background:var(--surface-2); color:var(--gold);">${ICONS[c]}</div>
-          <div class="card-body" style="align-items:center;"><span class="card-name">${c}</span><span class="card-cat">${DB.products.filter(p=>p.category===c).length} items</span></div>
+        <div class="card" onclick="setFilter('category','${c.key}'); nav('shop')" style="text-align:center;">
+          <div class="card-media" style="background:var(--surface-2); color:var(--gold);">${getIcon(c.key)}</div>
+          <div class="card-body" style="align-items:center;"><span class="card-name">${c.name}</span><span class="card-cat">${DB.products.filter(p=>p.category===c.key).length} items</span></div>
         </div>`).join('')}
     </div>
   </section>`;
@@ -1080,6 +1191,30 @@ function viewProduct(){
         </div>
       </div>
     </div>
+
+    <div style="margin-top:56px; max-width:760px;">
+      <div class="section-head">
+        <h2 style="font-size:24px;">Ratings & Reviews</h2>
+        ${state.productReviews.length ? `<span class="card-cat">${state.productReviews.length} review${state.productReviews.length>1?'s':''}</span>` : ''}
+      </div>
+
+      <div class="panel">
+        <h3 style="font-size:15px; margin-bottom:14px;">Write a Review</h3>
+        ${reviewStars(state.reviewDraft.rating, true)}
+        ${!state.customer ? `<div class="field" style="margin-top:14px;"><label>Your Name</label><input type="text" value="${state.reviewDraft.name||''}" oninput="state.reviewDraft.name=this.value"></div>` : `<p style="font-size:12px; color:var(--ink-dim); margin-top:10px;">Posting as ${state.customer.name}</p>`}
+        <div class="field" style="margin-top:14px;"><label>Your Review</label><textarea rows="3" placeholder="What did you think?" oninput="state.reviewDraft.text=this.value">${state.reviewDraft.text||''}</textarea></div>
+        <div class="field">
+          <label>Add a Photo <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label>
+          <input type="file" accept="image/*" onchange="pickReviewImage(this)">
+          ${state.reviewDraft.image ? `<div style="position:relative; width:90px; margin-top:10px;"><img src="${state.reviewDraft.image}" style="width:90px; height:90px; object-fit:cover; border-radius:4px;"><button type="button" onclick="removeReviewImage()" style="position:absolute; top:-6px; right:-6px; background:rgba(0,0,0,.75); color:#fff; border:0; border-radius:50%; width:20px; height:20px; font-size:12px; cursor:pointer;">×</button></div>` : ''}
+        </div>
+        <button class="btn btn-primary" onclick="submitReview('${p.id}')">Submit Review</button>
+      </div>
+
+      ${state.productReviewsLoading
+        ? `<p style="color:var(--ink-dim); margin-top:16px;">Loading reviews…</p>`
+        : (state.productReviews.length ? state.productReviews.map(reviewCard).join('') : `<p style="color:var(--ink-dim); margin-top:16px;">No reviews yet — be the first to share your thoughts.</p>`)}
+    </div>
   </section>`;
 }
 
@@ -1102,7 +1237,7 @@ function viewCart(){
       <div>
         ${lines.map(l=>`
           <div class="cart-row">
-            <div class="cart-thumb" style="background:hsl(${l.product.hue} 35% 18%); color:hsl(${l.product.hue} 60% 60%); overflow:hidden;">${productImages(l.product)[0] ? `<img src="${productImages(l.product)[0]}" style="width:100%; height:100%; object-fit:cover;" onerror="imgFallback(this,'${l.product.category}')">` : ICONS[l.product.category]}</div>
+            <div class="cart-thumb" style="background:hsl(${l.product.hue} 35% 18%); color:hsl(${l.product.hue} 60% 60%); overflow:hidden;">${productImages(l.product)[0] ? `<img src="${productImages(l.product)[0]}" style="width:100%; height:100%; object-fit:cover;" onerror="imgFallback(this,'${l.product.category}')">` : getIcon(l.product.category)}</div>
             <div>
               <div style="font-weight:600;">${l.product.name}</div>
               <div class="card-cat">Variant: ${l.variant}</div>
@@ -1382,22 +1517,47 @@ async function adminLogin(){
     const data = await apiFetch('/admin/login', {method:'POST', body:JSON.stringify({password:val})});
     authToken = data.token;
     state.isAdmin = true;
-    const [orders, customers, collections] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections;
+    localStorage.setItem('vantura_admin_token', data.token);
+    localStorage.setItem('vantura_was_admin', 'true');
+    const [orders, customers, collections, reviews] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews;
     nav('admin');
   } catch(err){ showToast(err.message || 'Incorrect password'); }
 }
 async function adminLogout(){
   try{ await apiFetch('/admin/logout', {method:'POST'}); } catch(e){}
-  authToken = null; state.isAdmin=false; nav('home');
+  authToken = null; state.isAdmin=false;
+  localStorage.removeItem('vantura_admin_token');
+  localStorage.removeItem('vantura_was_admin');
+  nav('home');
+}
+async function restoreAdminAuth(){
+  const token = localStorage.getItem('vantura_admin_token');
+  const wasAdmin = localStorage.getItem('vantura_was_admin');
+  if(!token || !wasAdmin) return;
+  authToken = token;
+  try{
+    const [orders, customers, collections, reviews] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews;
+    state.isAdmin = true;
+    state.adminView = localStorage.getItem('vantura_admin_view') || 'dashboard';
+    state.view = 'admin';
+    render();
+  } catch(err){
+    // token invalid/expired (e.g. server restarted, admin session lost) — quietly require login again
+    authToken = null;
+    localStorage.removeItem('vantura_admin_token');
+    localStorage.removeItem('vantura_was_admin');
+  }
 }
 
 function adminSidebar(){
-  const item = (v,label) => `<a href="#" class="${state.adminView===v?'active':''}" onclick="event.preventDefault(); state.adminView='${v}'; render()">${label}</a>`;
+  const item = (v,label) => `<a href="#" class="${state.adminView===v?'active':''}" onclick="event.preventDefault(); state.adminView='${v}'; localStorage.setItem('vantura_admin_view','${v}'); render()">${label}</a>`;
   return `<div class="admin-side">
     ${item('dashboard','Dashboard')}
     ${item('products','Products')}
     ${item('collections','Collections')}
+    ${item('reviews','Reviews')}
     ${item('orders','Orders')}
     ${item('customers','Customers')}
     ${item('coupons','Coupons')}
@@ -1406,7 +1566,7 @@ function adminSidebar(){
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
     <a href="#" onclick="event.preventDefault(); exportToExcel()" style="color:var(--gold);">⬇ Export to Excel</a>
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
-    <a href="#" onclick="event.preventDefault(); nav('home')">← View Store</a>
+    <a href="#" onclick="event.preventDefault(); localStorage.removeItem('vantura_was_admin'); nav('home')">← View Store</a>
     <a href="#" onclick="event.preventDefault(); adminLogout()" style="color:var(--danger);">Log Out</a>
   </div>`;
 }
@@ -1522,7 +1682,7 @@ function adminProducts(){
     <table><thead><tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Rating</th><th></th></tr></thead>
     <tbody>${DB.products.map(p=>`
       <tr>
-        <td><div style="width:34px; height:34px; border-radius:3px; background:hsl(${p.hue} 35% 20%); color:hsl(${p.hue} 60% 60%); display:flex; align-items:center; justify-content:center;">${ICONS[p.category]}</div></td>
+        <td><div style="width:34px; height:34px; border-radius:3px; background:hsl(${p.hue} 35% 20%); color:hsl(${p.hue} 60% 60%); display:flex; align-items:center; justify-content:center;">${getIcon(p.category)}</div></td>
         <td>${p.name}</td><td>${p.category}</td>
         <td class="mono">${fmt(p.price)}</td>
         <td class="mono">${p.stock<=0?'<span style="color:var(--danger)">0</span>':p.stock}</td>
@@ -1587,8 +1747,8 @@ function adminCollections(){
         <td style="max-width:320px;">${c.desc || '—'}</td>
         <td class="mono">${DB.products.filter(p=>p.category===c.key).length}</td>
         <td>${c._unmanaged
-          ? `<button class="btn-ghost" onclick="openCollectionModal(null, '${c.key}')">+ Add Details</button>`
-          : `<button class="btn-ghost" onclick="openCollectionModal('${c.key}')">Edit</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCollection('${c.key}')">Delete</button>`}</td>
+          ? `<button class="btn-ghost" onclick="openCollectionModal(null, '${c.key}')">+ Add Details</button><button class="btn-ghost" onclick="openManageCollectionProductsModal('${c.key}','${c.name}')">Manage Products</button>`
+          : `<button class="btn-ghost" onclick="openCollectionModal('${c.key}')">Edit</button><button class="btn-ghost" onclick="openManageCollectionProductsModal('${c.key}','${c.name}')">Manage Products</button><button class="btn-ghost" style="color:var(--danger);" onclick="deleteCollection('${c.key}')">Delete</button>`}</td>
       </tr>`).join('')}</tbody></table>
   </div>
   <p style="font-size:11px; color:var(--ink-dim); margin-top:12px;">A collection's name is also the "Category" you'll pick when adding a product, so it appears grouped correctly. Collections marked "Not configured" already have products using that category, but haven't been given a description yet.</p>`;
@@ -1618,6 +1778,22 @@ async function deleteCollection(key){
     DB.collections = DB.collections.filter(c=>c.key!==key);
     showToast('Collection deleted'); render();
   } catch(err){ showToast(err.message || 'Could not delete collection'); }
+}
+function openManageCollectionProductsModal(key, name){
+  state.modal = {type:'collectionProducts', data:{key, name, selected:{}}};
+  render();
+}
+async function saveManageCollectionProducts(){
+  const {key, selected} = state.modal.data;
+  const idsToAdd = Object.keys(selected).filter(id => selected[id]);
+  if(!idsToAdd.length){ state.modal = null; render(); return; }
+  try{
+    await Promise.all(idsToAdd.map(id => apiFetch('/products/' + id, {method:'PUT', body:JSON.stringify({category:key})})));
+    DB.products = await apiFetch('/products');
+    state.modal = null;
+    showToast(idsToAdd.length + ' product' + (idsToAdd.length>1?'s':'') + ' added to ' + key);
+    render();
+  } catch(err){ showToast(err.message || 'Could not update products'); }
 }
 
 function adminScratchCards(){
@@ -1668,6 +1844,42 @@ async function saveAnnouncement(){
   } catch(err){ showToast(err.message || 'Could not save announcement'); }
 }
 
+function adminReviews(){
+  const categories = ['All', ...new Set(DB.products.map(p=>p.category))];
+  const filterCat = state.adminReviewCategory || 'All';
+  const reviews = (DB.reviews||[]).filter(r => filterCat==='All' || r.category===filterCat);
+  const avg = reviews.length ? (reviews.reduce((s,r)=>s+r.rating,0)/reviews.length).toFixed(1) : '—';
+  return `<div class="toolbar">
+    <h2 style="font-size:22px;">Reviews (${reviews.length}) <span class="card-cat" style="font-weight:400;">· avg ${avg}★</span></h2>
+    <select style="width:200px;" onchange="state.adminReviewCategory=this.value; render()">
+      ${categories.map(c=>`<option value="${c}" ${filterCat===c?'selected':''}>${c==='All'?'All Categories':c}</option>`).join('')}
+    </select>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Product</th><th>Category</th><th>Rating</th><th>Review</th><th>Photo</th><th>Customer</th><th>Date</th><th></th></tr></thead>
+    <tbody>${reviews.length ? reviews.map(r=>`
+      <tr>
+        <td>${r.productName}</td>
+        <td>${r.category}</td>
+        <td class="stars">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</td>
+        <td style="max-width:260px; font-size:12px;">${r.text || '—'}</td>
+        <td>${r.image ? `<img src="${r.image}" style="width:40px; height:40px; object-fit:cover; border-radius:3px;">` : '—'}</td>
+        <td>${r.customerName}</td>
+        <td>${new Date(r.date).toLocaleDateString()}</td>
+        <td><button class="btn-ghost" style="color:var(--danger);" onclick="deleteReview('${r.id}')">Delete</button></td>
+      </tr>`).join('') : `<tr><td colspan="8" style="text-align:center; color:var(--ink-dim); padding:24px;">No reviews in this category yet</td></tr>`}
+    </tbody></table>
+  </div>`;
+}
+async function deleteReview(id){
+  if(!confirm('Delete this review?')) return;
+  try{
+    await apiFetch('/reviews/' + id, {method:'DELETE'});
+    DB.reviews = DB.reviews.filter(r=>r.id!==id);
+    showToast('Review deleted'); render();
+  } catch(err){ showToast(err.message || 'Could not delete review'); }
+}
+
 function adminCoupons(){
   return `<div class="toolbar">
     <h2 style="font-size:22px;">Coupons (${DB.coupons.length})</h2>
@@ -1688,7 +1900,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement};
+  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -1777,6 +1989,29 @@ function modalHtml(){
       </div>
     </div>`;
   }
+  if(state.modal.type==='collectionProducts'){
+    const d = state.modal.data;
+    return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>Add Products to "${d.name}"</h3>
+        <p style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Check products below to add them to this collection. Products already in it are shown for reference and can be moved out by editing that product directly.</p>
+        <div style="max-height:360px; overflow-y:auto; border:1px solid var(--line); border-radius:3px;">
+          ${DB.products.map(p=>{
+            const inCollection = p.category === d.key;
+            return `<label style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); ${inCollection?'opacity:.55;':'cursor:pointer;'}">
+              <input type="checkbox" ${inCollection?'checked disabled':''} onchange="state.modal.data.selected['${p.id}']=this.checked" style="width:auto;">
+              <span style="flex:1; font-size:13px;">${p.name} <span class="card-cat">(${p.category})</span></span>
+              ${inCollection?'<span style="font-size:10px; color:var(--gold); white-space:nowrap;">Already in collection</span>':''}
+            </label>`;
+          }).join('')}
+        </div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" onclick="saveManageCollectionProducts()">Add Selected Products</button>
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }
   return '';
 }
 
@@ -1813,6 +2048,7 @@ restoreCart();
 restoreAuth();
 loadCatalog();
 refreshCartFromServer();
+restoreAdminAuth();
 </script>
 </body>
 </html>

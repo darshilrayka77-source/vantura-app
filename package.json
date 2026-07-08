@@ -1,0 +1,13 @@
+{
+  "name": "vantura-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VANTURA store backend — Node.js API + static frontend host",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "mongodb": "^6.10.0"
+  }
+}

@@ -59,6 +59,7 @@ const SEED = {
     {key:'Kitchen', name:'Kitchen', desc:'Tools that make everyday cooking a little easier.', image:''},
   ],
   announcement: {text:'🎉 Free delivery on your first order — no code needed!', active:true},
+  paymentNote: {text:'+ ₹10 payment handling fee', active:false},
   orders: [],
   customers: [],
   reviews: [],
@@ -374,6 +375,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, db.announcement);
     }
 
+    /* ---------- PAYMENT METHOD NOTE ---------- */
+    if(pathname === '/api/payment-note' && req.method === 'GET'){
+      return send(res, 200, db.paymentNote || {text:'', active:false});
+    }
+    if(pathname === '/api/payment-note' && req.method === 'PUT'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const body = await readBody(req);
+      db.paymentNote = {text: body.text || '', active: !!body.active};
+      await saveDb();
+      return send(res, 200, db.paymentNote);
+    }
+
     /* ---------- ORDERS ---------- */
     if(pathname === '/api/orders' && req.method === 'POST'){
       const body = await readBody(req);
@@ -483,14 +496,15 @@ const server = http.createServer(async (req, res) => {
       if(customer){
         customer.name = body.name; customer.salt = salt; customer.passwordHash = hash;
         if(!customer.cart) customer.cart = [];
+        if(!customer.wishlist) customer.wishlist = [];
       } else {
-        customer = {id: uid('C'), name: body.name, email: body.email, phone: body.phone||'', since: new Date().toISOString().slice(0,10), salt, passwordHash: hash, cart: []};
+        customer = {id: uid('C'), name: body.name, email: body.email, phone: body.phone||'', since: new Date().toISOString().slice(0,10), salt, passwordHash: hash, cart: [], wishlist: []};
         db.customers.push(customer);
       }
       await saveDb();
       const token = crypto.randomBytes(24).toString('hex');
       customerSessions.set(token, customer.email);
-      return send(res, 201, {token, customer: {name: customer.name, email: customer.email, phone: customer.phone}, cart: customer.cart || []});
+      return send(res, 201, {token, customer: {name: customer.name, email: customer.email, phone: customer.phone}, cart: customer.cart || [], wishlist: customer.wishlist || []});
     }
     if(pathname === '/api/auth/login' && req.method === 'POST'){
       const body = await readBody(req);
@@ -500,7 +514,7 @@ const server = http.createServer(async (req, res) => {
       if(!verifyPassword(body.password, customer.salt, customer.passwordHash)) return send(res, 401, {message:'Incorrect email or password'});
       const token = crypto.randomBytes(24).toString('hex');
       customerSessions.set(token, customer.email);
-      return send(res, 200, {token, customer: {name: customer.name, email: customer.email, phone: customer.phone}, cart: customer.cart || []});
+      return send(res, 200, {token, customer: {name: customer.name, email: customer.email, phone: customer.phone}, cart: customer.cart || [], wishlist: customer.wishlist || []});
     }
     if(pathname === '/api/auth/logout' && req.method === 'POST'){
       const h = req.headers['authorization'] || '';
@@ -512,7 +526,7 @@ const server = http.createServer(async (req, res) => {
       const customer = getCustomerFromReq(req);
       if(!customer) return send(res, 401, {message:'Not logged in'});
       const orders = db.orders.filter(o => o.customer.email === customer.email);
-      return send(res, 200, {customer: {name: customer.name, email: customer.email, phone: customer.phone}, orders, cart: customer.cart || []});
+      return send(res, 200, {customer: {name: customer.name, email: customer.email, phone: customer.phone}, orders, cart: customer.cart || [], wishlist: customer.wishlist || []});
     }
     if(pathname === '/api/auth/cart' && req.method === 'PUT'){
       const customer = getCustomerFromReq(req);
@@ -521,6 +535,61 @@ const server = http.createServer(async (req, res) => {
       customer.cart = Array.isArray(body.cart) ? body.cart : [];
       await saveDb();
       return send(res, 200, {ok:true});
+    }
+    if(pathname === '/api/auth/wishlist' && req.method === 'PUT'){
+      const customer = getCustomerFromReq(req);
+      if(!customer) return send(res, 401, {message:'Not logged in'});
+      const body = await readBody(req);
+      customer.wishlist = Array.isArray(body.wishlist) ? body.wishlist : [];
+      await saveDb();
+      return send(res, 200, {ok:true});
+    }
+    if(pathname === '/api/auth/profile' && req.method === 'PUT'){
+      const customer = getCustomerFromReq(req);
+      if(!customer) return send(res, 401, {message:'Not logged in'});
+      const body = await readBody(req);
+      const wantsEmailChange = body.email && body.email.toLowerCase() !== customer.email.toLowerCase();
+      const wantsPasswordChange = !!body.newPassword;
+
+      if(wantsEmailChange || wantsPasswordChange){
+        if(!body.currentPassword) return send(res, 400, {message:'Enter your current password to change your email or password'});
+        if(!verifyPassword(body.currentPassword, customer.salt, customer.passwordHash)){
+          return send(res, 401, {message:'Current password is incorrect'});
+        }
+      }
+      if(wantsEmailChange){
+        const taken = db.customers.find(c => c !== customer && c.email.toLowerCase() === body.email.toLowerCase());
+        if(taken) return send(res, 409, {message:'That email is already used by another account'});
+      }
+      if(wantsPasswordChange && body.newPassword.length < 6){
+        return send(res, 400, {message:'New password must be at least 6 characters'});
+      }
+
+      if(body.name) customer.name = body.name;
+      if(body.phone !== undefined) customer.phone = body.phone;
+
+      let newToken = null;
+      if(wantsEmailChange){
+        const oldEmail = customer.email;
+        customer.email = body.email;
+        // carry the customer's existing order history over to their new email
+        db.orders.forEach(o => {
+          if(o.customer.email === oldEmail){ o.customer.email = customer.email; o.customer.name = customer.name; }
+        });
+        // rotate their session token since the old one is keyed to the old email
+        const h = req.headers['authorization'] || '';
+        const oldToken = h.startsWith('Bearer ') ? h.slice(7) : null;
+        if(oldToken) customerSessions.delete(oldToken);
+        newToken = crypto.randomBytes(24).toString('hex');
+        customerSessions.set(newToken, customer.email);
+      }
+      if(wantsPasswordChange){
+        const {salt, hash} = hashPassword(body.newPassword);
+        customer.salt = salt; customer.passwordHash = hash;
+      }
+
+      await saveDb();
+      return send(res, 200, {customer: {name: customer.name, email: customer.email, phone: customer.phone}, token: newToken});
     }
 
     /* ---------- ADMIN AUTH ---------- */

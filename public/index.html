@@ -107,6 +107,9 @@ nav.mainnav a:hover, nav.mainnav a.active{color:var(--ink); border-color:var(--a
 .price-now{font-family:'IBM Plex Mono'; font-weight:700; color:var(--ink);}
 .price-mrp{font-family:'IBM Plex Mono'; font-size:12px; color:var(--ink-dim); text-decoration:line-through;}
 .badge{position:absolute; top:10px; left:10px; background:var(--accent); color:var(--accent-ink); font-family:'IBM Plex Mono'; font-size:10px; padding:3px 7px; border-radius:2px; text-transform:uppercase;}
+.wishlist-btn{position:absolute; top:8px; right:8px; z-index:2; background:rgba(16,17,20,.55); border:0; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; color:#fff; cursor:pointer; transition:.15s;}
+.wishlist-btn:hover{background:rgba(16,17,20,.8);}
+.wishlist-btn.active{color:var(--accent);}
 .badge.low{background:var(--danger); color:#fff;}
 .stars{color:var(--gold); font-size:12px;}
 
@@ -289,6 +292,7 @@ const DB = {
   collections: [],
   reviews: [],
   announcement: {text:'', active:false},
+  paymentNote: {text:'', active:false},
 };
 
 async function apiFetch(path, opts={}){
@@ -321,16 +325,18 @@ function mergeOrders(list){
 async function loadCatalog(){
   document.getElementById('app').innerHTML = `<div style="padding:120px 20px; text-align:center; color:var(--ink-dim); font-family:'Inter',sans-serif;">Loading Vantura…</div>`;
   try{
-    const [products, coupons, collections, announcement] = await Promise.all([
+    const [products, coupons, collections, announcement, paymentNote] = await Promise.all([
       apiFetch('/products'),
       apiFetch('/coupons'),
       apiFetch('/collections'),
       apiFetch('/announcement'),
+      apiFetch('/payment-note'),
     ]);
     DB.products = products;
     DB.coupons = coupons;
     DB.collections = collections;
     DB.announcement = announcement;
+    DB.paymentNote = paymentNote;
     render();
   } catch(err){
     document.getElementById('app').innerHTML = `
@@ -369,7 +375,9 @@ const state = {
   productReviewsLoading:false,
   reviewDraft:{rating:5, text:'', image:null, name:''},
   adminReviewCategory:'All',
+  profileDraft:{name:'', email:'', phone:'', currentPassword:'', newPassword:''},
   mobileMenuOpen:false,
+  wishlist:[],
   announceDismissed:false,
 };
 
@@ -393,6 +401,37 @@ async function refreshCartFromServer(){
     try{ localStorage.setItem('vantura_cart', JSON.stringify(state.cart)); }catch(e){}
     render();
   } catch(e){ /* token may be stale — the account page will sign them out cleanly if so */ }
+}
+function persistWishlist(){ try{ localStorage.setItem('vantura_wishlist', JSON.stringify(state.wishlist)); }catch(e){} syncWishlistToServer(); }
+function restoreWishlist(){ try{ const raw = localStorage.getItem('vantura_wishlist'); if(raw) state.wishlist = JSON.parse(raw) || []; }catch(e){} }
+function mergeServerWishlist(serverWishlist){
+  (serverWishlist||[]).forEach(id=>{ if(!state.wishlist.includes(id)) state.wishlist.push(id); });
+}
+async function syncWishlistToServer(){
+  if(!state.customerToken) return;
+  try{ await customerFetch('/auth/wishlist', {method:'PUT', body:JSON.stringify({wishlist: state.wishlist})}); } catch(e){ /* silent — wishlist still works locally */ }
+}
+async function refreshWishlistFromServer(){
+  if(!state.customerToken) return;
+  try{
+    const data = await customerFetch('/auth/me');
+    mergeServerWishlist(data.wishlist);
+    try{ localStorage.setItem('vantura_wishlist', JSON.stringify(state.wishlist)); }catch(e){}
+    render();
+  } catch(e){ /* token may be stale — the account page will sign them out cleanly if so */ }
+}
+function isWishlisted(id){ return state.wishlist.includes(id); }
+function toggleWishlist(id, event){
+  if(event) event.stopPropagation(); // don't trigger the product card's own click-through to the product page
+  if(state.wishlist.includes(id)){
+    state.wishlist = state.wishlist.filter(x=>x!==id);
+    showToast('Removed from wishlist');
+  } else {
+    state.wishlist.push(id);
+    showToast('Added to wishlist');
+  }
+  persistWishlist();
+  render();
 }
 function restoreAuth(){
   try{
@@ -419,7 +458,11 @@ function nav(view, extra={}){
   if(['shop','home','collections'].includes(view)){
     apiFetch('/products').then(products => { DB.products = products; render(); }).catch(()=>{});
   }
-  if(view==='account' && state.customer){ state.myAccountOrdersLoading = true; loadMyAccountOrders(); }
+  if(view==='account' && state.customer){
+    state.myAccountOrdersLoading = true; loadMyAccountOrders();
+    state.profileDraft = {name:state.customer.name, email:state.customer.email, phone:state.customer.phone||'', currentPassword:'', newPassword:''};
+  }
+  if(view==='myorders' && state.customer){ state.myAccountOrdersLoading = true; loadMyAccountOrders(); }
   if(view==='product' && extra.productId){ state.productReviewsLoading = true; state.productReviews = []; loadProductReviews(extra.productId); }
 }
 function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
@@ -499,6 +542,7 @@ async function customerSignup(){
     localStorage.setItem('vantura_customer_token', data.token);
     localStorage.setItem('vantura_customer', JSON.stringify(data.customer));
     mergeServerCart(data.cart); persistCart();
+    mergeServerWishlist(data.wishlist); persistWishlist();
     applyCustomerToCheckout();
     state.accountForm = {name:'', email:'', password:''};
     showToast('Account created — welcome, ' + data.customer.name);
@@ -514,6 +558,7 @@ async function customerLogin(){
     localStorage.setItem('vantura_customer_token', data.token);
     localStorage.setItem('vantura_customer', JSON.stringify(data.customer));
     mergeServerCart(data.cart); persistCart();
+    mergeServerWishlist(data.wishlist); persistWishlist();
     applyCustomerToCheckout();
     state.accountForm = {name:'', email:'', password:''};
     showToast('Welcome back, ' + data.customer.name);
@@ -526,6 +571,30 @@ async function customerLogout(){
   localStorage.removeItem('vantura_customer_token');
   localStorage.removeItem('vantura_customer');
   showToast('Logged out'); nav('home');
+}
+async function updateProfile(){
+  const d = state.profileDraft;
+  if(!d.name || !d.email){ showToast('Name and email are required'); return; }
+  const emailChanged = d.email.toLowerCase() !== state.customer.email.toLowerCase();
+  const passwordChanged = !!d.newPassword;
+  if((emailChanged || passwordChanged) && !d.currentPassword){
+    showToast('Enter your current password to change your email or password'); return;
+  }
+  if(passwordChanged && d.newPassword.length < 6){ showToast('New password must be at least 6 characters'); return; }
+  try{
+    const payload = {name:d.name, phone:d.phone, email:d.email};
+    if(d.currentPassword) payload.currentPassword = d.currentPassword;
+    if(d.newPassword) payload.newPassword = d.newPassword;
+    const data = await customerFetch('/auth/profile', {method:'PUT', body:JSON.stringify(payload)});
+    state.customer = data.customer;
+    localStorage.setItem('vantura_customer', JSON.stringify(data.customer));
+    if(data.token){ state.customerToken = data.token; localStorage.setItem('vantura_customer_token', data.token); }
+    state.profileDraft = {name:data.customer.name, email:data.customer.email, phone:data.customer.phone||'', currentPassword:'', newPassword:''};
+    applyCustomerToCheckout();
+    showToast('Profile updated');
+    loadMyAccountOrders();
+    render();
+  } catch(err){ showToast(err.message || 'Could not update profile'); }
 }
 async function loadMyAccountOrders(){
   try{
@@ -909,16 +978,21 @@ function productMedia(p, size='card', imgIndex=0){
   const out = p.stock<=0;
   const cls = size==='card' ? 'card-media' : 'pd-media';
   const badge = size==='card' ? (out?`<span class="badge low">Sold Out</span>`: low?`<span class="badge low">Low Stock</span>`: p.featured?`<span class="badge">Featured</span>`:'') : '';
+  const heart = size==='card' ? `<button class="wishlist-btn ${isWishlisted(p.id)?'active':''}" onclick="toggleWishlist('${p.id}', event)" title="${isWishlisted(p.id)?'Remove from wishlist':'Add to wishlist'}">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="${isWishlisted(p.id)?'currentColor':'none'}" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.2 2 4.5 5.6 4c2.1-.3 4 1 6.4 3.3C14.4 5 16.3 3.7 18.4 4c3.6.5 5.2 4.2 3.6 7.7C19.5 16.3 12 21 12 21z"/></svg>
+    </button>` : '';
   const images = productImages(p);
   const src = images[imgIndex] || images[0];
   if(src){
     return `<div class="${cls}" style="position:relative; background:var(--surface-2); overflow:hidden;">
       ${badge}
+      ${heart}
       <img src="${src}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="imgFallback(this,'${p.category}')">
     </div>`;
   }
   return `<div class="${cls}" style="background:linear-gradient(155deg,hsl(${p.hue} 40% 22%),hsl(${p.hue} 30% 14%)); color:hsl(${p.hue} 70% 65%); position:relative;">
     ${badge}
+    ${heart}
     ${icon}
   </div>`;
 }
@@ -960,6 +1034,7 @@ function header(){
         ${link('home','Home')}
         ${link('shop','Shop')}
         ${link('collections','Collections')}
+        ${link('myorders','My Orders')}
         ${link('account', state.customer ? state.customer.name.split(' ')[0] : 'Account')}
         ${link('orders','Track Order')}
       </nav>
@@ -968,8 +1043,12 @@ function header(){
         <input id="searchInput" type="text" placeholder="Search products..." value="${state.filters.query}" onkeydown="if(event.key==='Enter'){setFilter('query', this.value); nav('shop');}">
       </div>
       <div class="headicons">
-        <button class="icon-btn" title="Admin" onclick="nav('${state.isAdmin?'admin':'admin-login'}')">
+        <button class="icon-btn" title="My Account" onclick="nav('account')">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="3.2"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+        </button>
+        <button class="icon-btn" title="Wishlist" onclick="nav('wishlist')">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.2 2 4.5 5.6 4c2.1-.3 4 1 6.4 3.3C14.4 5 16.3 3.7 18.4 4c3.6.5 5.2 4.2 3.6 7.7C19.5 16.3 12 21 12 21z"/></svg>
+          ${state.wishlist.length>0?`<span class="cart-badge">${state.wishlist.length}</span>`:''}
         </button>
         <button class="icon-btn" title="Cart" onclick="nav('cart')">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="9" cy="21" r="1"/><circle cx="17" cy="21" r="1"/></svg>
@@ -981,6 +1060,7 @@ function header(){
       ${link('home','Home')}
       ${link('shop','Shop')}
       ${link('collections','Collections')}
+      ${link('myorders','My Orders')}
       ${link('account', state.customer ? `My Account (${state.customer.name.split(' ')[0]})` : 'Account')}
       ${link('orders','Track Order')}
     </nav>
@@ -1182,6 +1262,9 @@ function viewProduct(){
           <button class="btn btn-primary" ${p.stock<=0?'disabled':''} onclick="addToCart('${p.id}', window.__selVariant, window.__selQty); window.__selQty=1;">
             ${p.stock<=0?'Sold Out':'Add to Cart'}
           </button>
+          <button class="btn btn-outline" onclick="toggleWishlist('${p.id}')" style="${isWishlisted(p.id)?'border-color:var(--accent); color:var(--accent);':''}">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="${isWishlisted(p.id)?'currentColor':'none'}" stroke="currentColor" stroke-width="1.8" style="margin-right:6px; vertical-align:-3px;"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.2 2 4.5 5.6 4c2.1-.3 4 1 6.4 3.3C14.4 5 16.3 3.7 18.4 4c3.6.5 5.2 4.2 3.6 7.7C19.5 16.3 12 21 12 21z"/></svg>${isWishlisted(p.id)?'In Wishlist':'Add to Wishlist'}
+          </button>
         </div>
 
         <div style="margin-top:26px;">
@@ -1215,6 +1298,21 @@ function viewProduct(){
         ? `<p style="color:var(--ink-dim); margin-top:16px;">Loading reviews…</p>`
         : (state.productReviews.length ? state.productReviews.map(reviewCard).join('') : `<p style="color:var(--ink-dim); margin-top:16px;">No reviews yet — be the first to share your thoughts.</p>`)}
     </div>
+  </section>`;
+}
+
+function viewWishlist(){
+  const products = state.wishlist.map(id => findProduct(id)).filter(Boolean);
+  return `<section class="section wrap">
+    <div class="section-head"><h2>My Wishlist</h2></div>
+    ${products.length
+      ? `<div class="grid">${products.map(productCard).join('')}</div>`
+      : `<div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 21s-7.5-4.7-10-9.3C.4 8.2 2 4.5 5.6 4c2.1-.3 4 1 6.4 3.3C14.4 5 16.3 3.7 18.4 4c3.6.5 5.2 4.2 3.6 7.7C19.5 16.3 12 21 12 21z"/></svg>
+          <h3 style="font-size:20px;">Your wishlist is empty</h3>
+          <p style="margin:10px 0 24px;">Tap the heart on any product to save it here.</p>
+          <button class="btn btn-primary" onclick="nav('shop')">Shop Products</button>
+        </div>`}
   </section>`;
 }
 
@@ -1302,6 +1400,7 @@ function viewCheckout(){
               ${f.payment===m && m==='Card' ? `<div class="form-grid" style="margin-top:12px;"><div class="field"><label>Card Number</label><input type="text" placeholder="4242 4242 4242 4242" value="${f.cardNum}" oninput="checkoutForm.cardNum=this.value"></div><div class="field"><label>Expiry / CVC</label><input type="text" placeholder="MM/YY · CVC"></div></div>` : ''}
               ${f.payment===m && m==='UPI' ? `<div class="field" style="margin-top:12px;"><label>UPI ID</label><input type="text" placeholder="yourname@upi" value="${f.upiId}" oninput="checkoutForm.upiId=this.value"></div>` : ''}
               ${f.payment===m && m==='Cash on Delivery' ? `<p style="font-size:12px; color:var(--ink-dim); margin-top:10px;">Pay in cash when your order arrives.</p>` : ''}
+              ${m!=='Cash on Delivery' && DB.paymentNote && DB.paymentNote.active && DB.paymentNote.text ? `<p style="font-size:11px; color:var(--gold); margin-top:8px;">${DB.paymentNote.text}</p>` : ''}
             </div>`).join('')}
           <p style="font-size:11px; color:var(--ink-dim); margin-top:10px;">Demo checkout — no real payment is charged.</p>
         </div>
@@ -1462,9 +1561,32 @@ function orderCard(o){
     <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
   </div>`;
 }
+function viewMyOrders(){
+  if(!state.customer){
+    return `<section class="section wrap" style="max-width:480px; text-align:center; padding-top:60px;">
+      <h2 style="font-size:24px; margin-bottom:12px;">My Orders</h2>
+      <p style="color:var(--ink-dim); margin-bottom:24px;">Log in to see every order you've ever placed, all in one place.</p>
+      <button class="btn btn-primary" onclick="nav('account')">Log In / Sign Up</button>
+      <p style="font-size:12px; color:var(--ink-dim); margin-top:16px;">Placed an order as a guest? <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); nav('orders')">Track it by email instead</a>.</p>
+    </section>`;
+  }
+  const orders = [...(state.myAccountOrders || [])].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const totalSpent = orders.reduce((s,o)=>s+o.total, 0);
+  return `<section class="section wrap" style="max-width:700px;">
+    <div class="section-head">
+      <h2>My Orders</h2>
+      ${orders.length ? `<span class="card-cat">${orders.length} order${orders.length>1?'s':''} · ${fmt(totalSpent)} lifetime</span>` : ''}
+    </div>
+    ${state.myAccountOrdersLoading
+      ? `<p style="color:var(--ink-dim); margin-top:10px;">Loading your orders…</p>`
+      : (orders.length ? orders.map(orderCard).join('') : `<p style="color:var(--ink-dim); margin-top:10px;">No orders yet — <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); nav('shop')">start shopping</a>.</p>`)}
+  </section>`;
+}
+
 function viewAccount(){
   if(state.customer){
     const orders = [...(state.myAccountOrders || [])].sort((a,b) => new Date(b.date) - new Date(a.date));
+    const pd = state.profileDraft;
     return `<section class="section wrap" style="max-width:560px;">
       <div class="section-head"><h2>My Account</h2></div>
       <div class="panel">
@@ -1472,6 +1594,24 @@ function viewAccount(){
         <p class="card-cat" style="margin-top:4px;">${state.customer.email}</p>
         <button class="btn btn-outline btn-sm" style="margin-top:14px;" onclick="customerLogout()">Log Out</button>
       </div>
+
+      <div class="section-head" style="margin-top:30px;"><h3 style="font-size:18px;">Edit Profile</h3></div>
+      <div class="panel">
+        <div class="form-grid">
+          <div class="field"><label>Name</label><input type="text" value="${pd.name}" oninput="state.profileDraft.name=this.value"></div>
+          <div class="field"><label>Phone</label><input type="tel" value="${pd.phone}" oninput="state.profileDraft.phone=this.value"></div>
+        </div>
+        <div class="field"><label>Email</label><input type="email" value="${pd.email}" oninput="state.profileDraft.email=this.value"></div>
+        <div style="border-top:1px solid var(--line); margin:16px 0 14px; padding-top:14px;">
+          <p style="font-size:12px; color:var(--ink-dim); margin-bottom:12px;">Changing your email or password requires your current password:</p>
+          <div class="form-grid">
+            <div class="field"><label>Current Password</label><input type="password" value="${pd.currentPassword}" oninput="state.profileDraft.currentPassword=this.value"></div>
+            <div class="field"><label>New Password <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="password" value="${pd.newPassword}" oninput="state.profileDraft.newPassword=this.value"></div>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="updateProfile()">Save Changes</button>
+      </div>
+
       <div class="section-head" style="margin-top:30px;">
         <h3 style="font-size:18px;">My Orders ${orders.length ? `<span style="color:var(--ink-dim); font-size:13px; font-weight:400;">(${orders.length})</span>` : ''}</h3>
       </div>
@@ -1563,6 +1703,7 @@ function adminSidebar(){
     ${item('coupons','Coupons')}
     ${item('scratch','Scratch Cards')}
     ${item('announcement','Announcement Bar')}
+    ${item('paymentnote','Payment Note')}
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
     <a href="#" onclick="event.preventDefault(); exportToExcel()" style="color:var(--gold);">⬇ Export to Excel</a>
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
@@ -1844,6 +1985,26 @@ async function saveAnnouncement(){
   } catch(err){ showToast(err.message || 'Could not save announcement'); }
 }
 
+function adminPaymentNote(){
+  const n = DB.paymentNote || {text:'', active:false};
+  return `<div class="toolbar"><h2 style="font-size:22px;">Payment Note</h2></div>
+  <div class="panel" style="max-width:520px;">
+    <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px;">This short note shows under every payment method at checkout <strong>except Cash on Delivery</strong> — useful for a small handling fee or a note about processing time.</p>
+    <div class="field"><label>Note Text</label><input type="text" id="paymentNoteText" placeholder="e.g. + ₹10 payment handling fee" value="${n.text}"></div>
+    <div class="field"><label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--ink);"><input type="checkbox" id="paymentNoteActive" ${n.active?'checked':''} style="width:auto;">Show this note at checkout</label></div>
+    <button class="btn btn-primary" onclick="savePaymentNote()">Save Changes</button>
+  </div>`;
+}
+async function savePaymentNote(){
+  const text = document.getElementById('paymentNoteText').value;
+  const active = document.getElementById('paymentNoteActive').checked;
+  try{
+    DB.paymentNote = await apiFetch('/payment-note', {method:'PUT', body:JSON.stringify({text, active})});
+    showToast('Payment note updated');
+    render();
+  } catch(err){ showToast(err.message || 'Could not save payment note'); }
+}
+
 function adminReviews(){
   const categories = ['All', ...new Set(DB.products.map(p=>p.category))];
   const filterCat = state.adminReviewCategory || 'All';
@@ -1900,7 +2061,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement};
+  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -2027,7 +2188,7 @@ function render(){
   const views = {
     home:viewHome, shop:viewShop, collections:viewCollections, product:viewProduct,
     cart:viewCart, checkout:viewCheckout, confirmation:viewConfirmation, orders:viewOrders,
-    account:viewAccount,
+    account:viewAccount, wishlist:viewWishlist, myorders:viewMyOrders,
     'admin-login':viewAdminLogin, admin:viewAdmin,
   };
   const isAdminChrome = state.view==='admin' || (state.view==='admin-login');
@@ -2045,9 +2206,11 @@ function render(){
 }
 
 restoreCart();
+restoreWishlist();
 restoreAuth();
 loadCatalog();
 refreshCartFromServer();
+refreshWishlistFromServer();
 restoreAdminAuth();
 </script>
 </body>

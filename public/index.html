@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
@@ -121,7 +122,7 @@ nav.mainnav a:hover, nav.mainnav a.active{color:var(--ink); border-color:var(--a
 .filter-opt{display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 0; color:var(--ink-dim); cursor:pointer;}
 .filter-opt.active{color:var(--accent);}
 .filter-opt input{accent-color:var(--accent);}
-select,input[type=text],input[type=email],input[type=tel],input[type=number],textarea{
+select,input[type=text],input[type=email],input[type=tel],input[type=number],input[type=password],textarea{
   width:100%; background:var(--surface-2); border:1px solid var(--line); color:var(--ink); padding:10px 12px; border-radius:var(--radius); font-family:inherit; font-size:13px; outline:0;
 }
 select:focus,input:focus,textarea:focus{border-color:var(--accent);}
@@ -375,7 +376,10 @@ const state = {
   productReviewsLoading:false,
   reviewDraft:{rating:5, text:'', image:null, name:''},
   adminReviewCategory:'All',
+  filtersOpen:false,
   profileDraft:{name:'', email:'', phone:'', currentPassword:'', newPassword:''},
+  bulkImportRows:[],
+  bulkImportFileName:'',
   mobileMenuOpen:false,
   wishlist:[],
   announceDismissed:false,
@@ -466,6 +470,12 @@ function nav(view, extra={}){
   if(view==='product' && extra.productId){ state.productReviewsLoading = true; state.productReviews = []; loadProductReviews(extra.productId); }
 }
 function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
+function togglePasswordVisibility(btn){
+  const input = btn.previousElementSibling;
+  if(!input) return;
+  if(input.type === 'password'){ input.type = 'text'; btn.textContent = 'Hide'; }
+  else { input.type = 'password'; btn.textContent = 'Show'; }
+}
 const fmt = n => new Intl.NumberFormat('en-IN', {style:'currency', currency:'INR', maximumFractionDigits:0}).format(n);
 const findProduct = id => DB.products.find(p=>p.id===id);
 
@@ -673,6 +683,17 @@ function addImageToModal(){
   state.modal.data.images.push(url);
   render();
 }
+async function addImageFileToModal(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Please choose an image file'); return; }
+  try{
+    const dataUrl = await compressImageFile(file);
+    if(!state.modal.data.images) state.modal.data.images = [];
+    state.modal.data.images.push(dataUrl);
+    render();
+  } catch(err){ showToast(err.message || 'Could not read that image'); }
+}
 function removeImageFromModal(idx){
   state.modal.data.images.splice(idx, 1);
   render();
@@ -707,6 +728,62 @@ async function deleteProduct(id){
     showToast('Product removed'); render();
   } catch(err){ showToast(err.message || 'Could not remove product'); }
 }
+
+/* ============================================================
+   BULK PRODUCT IMPORT (CSV)
+============================================================ */
+function downloadCsvTemplate(){
+  const header = 'name,category,price,mrp,stock,description,images,variants,rating,featured\n';
+  const example = 'Wireless Mouse,Electronics,799,999,50,"Ergonomic wireless mouse with USB receiver","https://example.com/mouse1.jpg|https://example.com/mouse2.jpg","Black|Grey",4.5,TRUE\n';
+  const blob = new Blob([header + example], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'vantura-product-template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function handleCsvFile(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  state.bulkImportFileName = file.name;
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    complete: (results) => {
+      state.bulkImportRows = results.data.map(row => {
+        const name = (row.name || '').trim();
+        const price = parseFloat(row.price);
+        const valid = !!name && !!price && price > 0;
+        return {
+          name, category: (row.category || 'Electronics').trim(),
+          price: price || 0, mrp: parseFloat(row.mrp) || price || 0,
+          stock: parseInt(row.stock) || 0,
+          desc: (row.description || '').trim(),
+          images: (row.images || '').split('|').map(s=>s.trim()).filter(Boolean),
+          variants: (row.variants || '').split('|').map(s=>s.trim()).filter(Boolean),
+          rating: parseFloat(row.rating) || 4.5,
+          featured: /^(true|yes|1)$/i.test((row.featured || '').trim()),
+          valid,
+        };
+      });
+      render();
+    },
+    error: () => { showToast('Could not read that CSV file'); }
+  });
+}
+function clearBulkImport(){ state.bulkImportRows = []; state.bulkImportFileName = ''; render(); }
+async function importBulkProducts(){
+  const validRows = state.bulkImportRows.filter(r => r.valid);
+  if(!validRows.length){ showToast('No valid rows to import'); return; }
+  try{
+    const result = await apiFetch('/products/bulk', {method:'POST', body:JSON.stringify({products: validRows})});
+    DB.products = await apiFetch('/products');
+    state.bulkImportRows = []; state.bulkImportFileName = '';
+    showToast(`${result.created} product${result.created!==1?'s':''} imported${result.skipped.length ? `, ${result.skipped.length} skipped` : ''}`);
+    render();
+  } catch(err){ showToast(err.message || 'Could not import products'); }
+}
+
 function openCouponModal(code){
   const data = code ? {...DB.coupons.find(c=>c.code===code)} : {code:'',type:'percent',value:10,minOrder:0,active:true,desc:'', _isNew:true};
   state.modal = {type:'coupon', data};
@@ -1189,14 +1266,21 @@ function viewShop(){
   return `<section class="section wrap">
     <div class="section-head">
       <h2>${state.filters.category==='All'?'All Products':state.filters.category}</h2>
-      <select style="width:180px;" onchange="setFilter('sort',this.value); render()">
-        <option value="featured" ${state.filters.sort==='featured'?'selected':''}>Sort: Featured</option>
-        <option value="price-asc" ${state.filters.sort==='price-asc'?'selected':''}>Price: Low to High</option>
-        <option value="price-desc" ${state.filters.sort==='price-desc'?'selected':''}>Price: High to Low</option>
-        <option value="rating" ${state.filters.sort==='rating'?'selected':''}>Top Rated</option>
-      </select>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-outline btn-sm" onclick="state.filtersOpen=!state.filtersOpen; render()" style="display:flex; align-items:center; gap:6px; ${state.filtersOpen?'border-color:var(--accent); color:var(--accent);':''}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          Filters
+        </button>
+        <select style="width:180px;" onchange="setFilter('sort',this.value); render()">
+          <option value="featured" ${state.filters.sort==='featured'?'selected':''}>Sort: Featured</option>
+          <option value="price-asc" ${state.filters.sort==='price-asc'?'selected':''}>Price: Low to High</option>
+          <option value="price-desc" ${state.filters.sort==='price-desc'?'selected':''}>Price: High to Low</option>
+          <option value="rating" ${state.filters.sort==='rating'?'selected':''}>Top Rated</option>
+        </select>
+      </div>
     </div>
-    <div class="shop-layout">
+    <div class="shop-layout" style="${state.filtersOpen ? '' : 'grid-template-columns:1fr;'}">
+      ${state.filtersOpen ? `
       <div class="filters">
         <div class="filter-group">
           <h4>SEARCH</h4>
@@ -1212,7 +1296,7 @@ function viewShop(){
           <h4>MAX PRICE — <span class="mono">${fmt(state.filters.maxPrice)}</span></h4>
           <input type="range" min="200" max="4000" step="100" value="${state.filters.maxPrice}" oninput="setFilter('maxPrice', parseInt(this.value)); render()">
         </div>
-      </div>
+      </div>` : ''}
       <div>
         ${items.length? `<div class="grid">${items.map(productCard).join('')}</div>` :
           `<div class="empty-state"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="21" cy="21" r="14"/><path d="M31 31l10 10"/></svg><h3 style="font-size:18px;">No products match</h3><p>Try widening your filters.</p></div>`}
@@ -1605,8 +1689,8 @@ function viewAccount(){
         <div style="border-top:1px solid var(--line); margin:16px 0 14px; padding-top:14px;">
           <p style="font-size:12px; color:var(--ink-dim); margin-bottom:12px;">Changing your email or password requires your current password:</p>
           <div class="form-grid">
-            <div class="field"><label>Current Password</label><input type="password" value="${pd.currentPassword}" oninput="state.profileDraft.currentPassword=this.value"></div>
-            <div class="field"><label>New Password <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="password" value="${pd.newPassword}" oninput="state.profileDraft.newPassword=this.value"></div>
+            <div class="field"><label>Current Password</label><div style="position:relative;"><input type="password" style="padding-right:64px;" value="${pd.currentPassword}" oninput="state.profileDraft.currentPassword=this.value"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>
+            <div class="field"><label>New Password <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><div style="position:relative;"><input type="password" style="padding-right:64px;" value="${pd.newPassword}" oninput="state.profileDraft.newPassword=this.value"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>
           </div>
         </div>
         <button class="btn btn-primary" onclick="updateProfile()">Save Changes</button>
@@ -1622,7 +1706,9 @@ function viewAccount(){
   }
   const f = state.accountForm;
   const mode = state.accountMode;
-  const field = (label,key,type='text') => `<div class="field"><label>${label}</label><input type="${type}" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"></div>`;
+  const field = (label,key,type='text') => type==='password'
+    ? `<div class="field"><label>${label}</label><div style="position:relative;"><input type="password" id="pwField_${key}" style="padding-right:64px;" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>`
+    : `<div class="field"><label>${label}</label><input type="${type}" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"></div>`;
   return `<section class="section wrap" style="max-width:420px;">
     <div class="section-head"><h2>${mode==='signup' ? 'Create Account' : 'Log In'}</h2></div>
     <div class="panel">
@@ -1696,6 +1782,7 @@ function adminSidebar(){
   return `<div class="admin-side">
     ${item('dashboard','Dashboard')}
     ${item('products','Products')}
+    ${item('bulkimport','Bulk Import (CSV)')}
     ${item('collections','Collections')}
     ${item('reviews','Reviews')}
     ${item('orders','Orders')}
@@ -1814,10 +1901,50 @@ function adminDashboard(){
   </div>`;
 }
 
+function adminBulkImport(){
+  const rows = state.bulkImportRows || [];
+  const validCount = rows.filter(r=>r.valid).length;
+  const skippedCount = rows.length - validCount;
+  return `<div class="toolbar"><h2 style="font-size:22px;">Bulk Import Products (CSV)</h2></div>
+  <div class="panel" style="max-width:720px;">
+    <p style="color:var(--ink-dim); font-size:13px; margin-bottom:14px;">Upload a CSV file from a supplier — every valid row becomes a new product automatically. Multiple images or variants in one cell should be separated with a <span class="mono">|</span> pipe character.</p>
+    <button class="btn btn-outline btn-sm" onclick="downloadCsvTemplate()">⬇ Download CSV Template</button>
+    <div class="field" style="margin-top:18px;">
+      <label>Choose CSV File</label>
+      <input type="file" accept=".csv" onchange="handleCsvFile(this)">
+    </div>
+  </div>
+  ${rows.length ? `
+    <div class="panel" style="margin-top:18px;">
+      <div class="toolbar" style="margin-bottom:14px;">
+        <h3 style="font-size:15px;">${state.bulkImportFileName} — ${validCount} ready to import${skippedCount ? `, ${skippedCount} will be skipped` : ''}</h3>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="clearBulkImport()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="importBulkProducts()" ${validCount?'':'disabled'}>Import ${validCount} Product${validCount!==1?'s':''}</button>
+        </div>
+      </div>
+      <div style="max-height:360px; overflow-y:auto;">
+        <table><thead><tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Note</th></tr></thead>
+        <tbody>${rows.map(r=>`
+          <tr style="${r.valid?'':'opacity:.5;'}">
+            <td>${r.valid ? '<span style="color:var(--ok);">✓</span>' : '<span style="color:var(--danger);">✕</span>'}</td>
+            <td>${r.name || '(blank)'}</td>
+            <td>${r.category}</td>
+            <td class="mono">${r.price ? fmt(r.price) : '—'}</td>
+            <td class="mono">${r.stock}</td>
+            <td style="font-size:11px; color:var(--ink-dim);">${r.valid ? '' : 'Missing name or valid price'}</td>
+          </tr>`).join('')}</tbody></table>
+      </div>
+    </div>` : ''}`;
+}
+
 function adminProducts(){
   return `<div class="toolbar">
     <h2 style="font-size:22px;">Products (${DB.products.length})</h2>
-    <button class="btn btn-primary btn-sm" onclick="openProductModal(null)">+ Add Product</button>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-outline btn-sm" onclick="state.adminView='bulkimport'; localStorage.setItem('vantura_admin_view','bulkimport'); render()">⬆ Bulk Import (CSV)</button>
+      <button class="btn btn-primary btn-sm" onclick="openProductModal(null)">+ Add Product</button>
+    </div>
   </div>
   <div class="panel" style="padding:0;">
     <table><thead><tr><th></th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Rating</th><th></th></tr></thead>
@@ -2061,7 +2188,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote};
+  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -2081,7 +2208,11 @@ function modalHtml(){
           <label>Product Images <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional — first image is the main photo; leave empty to use the icon tile)</span></label>
           <div style="display:flex; gap:8px;">
             <input type="text" id="newImageUrlInput" placeholder="https://images.example.com/photo.jpg" onkeydown="if(event.key==='Enter'){ event.preventDefault(); addImageToModal(); }">
-            <button type="button" class="btn btn-outline btn-sm" style="white-space:nowrap;" onclick="addImageToModal()">+ Add</button>
+            <button type="button" class="btn btn-outline btn-sm" style="white-space:nowrap;" onclick="addImageToModal()">+ Add Link</button>
+          </div>
+          <div style="margin-top:10px;">
+            <label style="display:block; font-size:11px; color:var(--ink-dim); text-transform:none; letter-spacing:0; margin-bottom:6px;">Or upload a photo from your device</label>
+            <input type="file" accept="image/*" onchange="addImageFileToModal(this)">
           </div>
           ${(d.images && d.images.length) ? `
             <div style="display:flex; flex-wrap:wrap; gap:10px; margin-top:12px;">

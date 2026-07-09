@@ -271,6 +271,36 @@ const server = http.createServer(async (req, res) => {
       db.products.push(product); await saveDb();
       return send(res, 201, product);
     }
+    if(pathname === '/api/products/bulk' && req.method === 'POST'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const body = await readBody(req);
+      if(!Array.isArray(body.products) || !body.products.length){
+        return send(res, 400, {message:'No products were provided'});
+      }
+      const created = [];
+      const skipped = [];
+      body.products.forEach((row, i) => {
+        const name = (row.name || '').toString().trim();
+        const price = parseFloat(row.price);
+        if(!name || !price || price <= 0){
+          skipped.push({row: i + 1, name: name || '(blank)', reason: 'Missing name or valid price'});
+          return;
+        }
+        const product = {
+          id: uid('P'), name, category: (row.category || 'Electronics').toString().trim(),
+          price, mrp: parseFloat(row.mrp) || price,
+          stock: parseInt(row.stock) || 0, rating: parseFloat(row.rating) || 4.5, hue: parseInt(row.hue) || Math.floor(Math.random()*360),
+          desc: (row.desc || '').toString().trim(),
+          images: Array.isArray(row.images) ? row.images.filter(Boolean) : [],
+          variants: Array.isArray(row.variants) && row.variants.length ? row.variants : ['One Size'],
+          featured: !!row.featured,
+        };
+        db.products.push(product);
+        created.push(product);
+      });
+      if(created.length) await saveDb();
+      return send(res, 201, {created: created.length, skipped});
+    }
     if(parts[1] === 'products' && parts[2] && req.method === 'PUT'){
       if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
       const idx = db.products.findIndex(p => p.id === parts[2]);

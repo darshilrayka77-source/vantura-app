@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 
@@ -293,7 +294,9 @@ const DB = {
   collections: [],
   reviews: [],
   announcement: {text:'', active:false},
-  paymentNote: {text:'', active:false},
+  paymentNotes: {},
+  storeInfo: {},
+  paymentGatewayEnabled: false,
 };
 
 async function apiFetch(path, opts={}){
@@ -326,18 +329,23 @@ function mergeOrders(list){
 async function loadCatalog(){
   document.getElementById('app').innerHTML = `<div style="padding:120px 20px; text-align:center; color:var(--ink-dim); font-family:'Inter',sans-serif;">Loading Vantura…</div>`;
   try{
-    const [products, coupons, collections, announcement, paymentNote] = await Promise.all([
+    const [products, coupons, collections, announcement, paymentNotes, paymentStatus, storeInfo] = await Promise.all([
       apiFetch('/products'),
       apiFetch('/coupons'),
       apiFetch('/collections'),
       apiFetch('/announcement'),
-      apiFetch('/payment-note'),
+      apiFetch('/payment-notes'),
+      apiFetch('/payments/status'),
+      apiFetch('/store-info'),
     ]);
     DB.products = products;
     DB.coupons = coupons;
     DB.collections = collections;
     DB.announcement = announcement;
-    DB.paymentNote = paymentNote;
+    DB.paymentNotes = paymentNotes;
+    DB.paymentGatewayEnabled = paymentStatus.enabled;
+    DB.storeInfo = storeInfo;
+    if(!DB.paymentGatewayEnabled) checkoutForm.payment = 'Cash on Delivery';
     render();
   } catch(err){
     document.getElementById('app').innerHTML = `
@@ -532,7 +540,7 @@ function calcTotals(){
 /* ============================================================
    CHECKOUT / ORDERS
 ============================================================ */
-const checkoutForm = {name:'',email:'',phone:'',line1:'',city:'',state:'',zip:'',country:'India',payment:'Card',cardNum:'',upiId:''};
+const checkoutForm = {name:'',email:'',phone:'',line1:'',city:'',state:'',zip:'',country:'India',payment:'Razorpay'};
 
 /* ============================================================
    CUSTOMER ACCOUNTS
@@ -638,16 +646,59 @@ async function placeOrder(){
 
   const placeBtn = document.getElementById('placeOrderBtn');
   if(placeBtn){ placeBtn.disabled = true; placeBtn.textContent = 'Placing Order…'; }
-  try{
-    const order = await apiFetch('/orders', {method:'POST', body:JSON.stringify(payload)});
+
+  async function finishOrder(order){
     mergeOrders([order]);
-    // refresh product stock levels shown in the storefront
     DB.products = await apiFetch('/products');
     state.cart = []; state.coupon = null; state.lastOrderId = order.id; persistCart();
     nav('confirmation');
+  }
+  function resetButton(){
+    if(placeBtn){ placeBtn.disabled = false; placeBtn.textContent = 'Place Order'; }
+  }
+
+  if(checkoutForm.payment === 'Razorpay'){
+    try{
+      const rzp = await apiFetch('/payments/create', {method:'POST', body:JSON.stringify({items: payload.items, couponCode: payload.couponCode})});
+      const checkout = new Razorpay({
+        key: rzp.keyId, amount: rzp.amount, currency: rzp.currency,
+        name: 'Vantura', description: 'Order payment', order_id: rzp.razorpayOrderId,
+        prefill: {name: checkoutForm.name, email: checkoutForm.email, contact: checkoutForm.phone},
+        theme: {color: '#FF5A3C'},
+        handler: async function(response){
+          try{
+            const order = await apiFetch('/payments/verify', {method:'POST', body:JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              orderData: payload,
+            })});
+            await finishOrder(order);
+          } catch(err){
+            showToast(err.message || 'Payment succeeded but the order could not be recorded — please contact support');
+            resetButton();
+          }
+        },
+        modal: { ondismiss: function(){ showToast('Payment cancelled'); resetButton(); } },
+      });
+      checkout.on('payment.failed', function(response){
+        showToast('Payment failed: ' + ((response.error && response.error.description) || 'please try again'));
+        resetButton();
+      });
+      checkout.open();
+    } catch(err){
+      showToast(err.message || 'Could not start payment');
+      resetButton();
+    }
+    return;
+  }
+
+  try{
+    const order = await apiFetch('/orders', {method:'POST', body:JSON.stringify(payload)});
+    await finishOrder(order);
   } catch(err){
     showToast(err.message || 'Could not place order');
-    if(placeBtn){ placeBtn.disabled = false; placeBtn.textContent = 'Place Order'; }
+    resetButton();
   }
 }
 
@@ -1146,6 +1197,101 @@ function header(){
 }
 function toggleMobileMenu(){ state.mobileMenuOpen = !state.mobileMenuOpen; render(); }
 
+function viewContact(){
+  const s = DB.storeInfo || {};
+  return `<section class="section wrap" style="max-width:640px;">
+    <div class="section-head"><h2>Contact Us</h2></div>
+    <p style="color:var(--ink-dim); margin-bottom:26px;">Questions about an order, a product, or anything else — we're happy to help.</p>
+    <div class="panel">
+      <div class="spec-line"><span>Email</span><span class="mono">${s.supportEmail || '—'}</span></div>
+      <div class="spec-line"><span>Phone</span><span class="mono">${s.supportPhone || '—'}</span></div>
+      <div class="spec-line"><span>Support Hours</span><span>${s.hours || '—'}</span></div>
+      <div class="spec-line" style="border-bottom:0;"><span>Address</span><span style="text-align:right; max-width:280px;">${s.address || '—'}</span></div>
+    </div>
+    <div class="panel" style="margin-top:18px;">
+      <h3 style="font-size:15px; margin-bottom:10px;">Before you write in</h3>
+      <p style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">Most questions can be answered faster through:</p>
+      <a href="#" onclick="event.preventDefault(); nav('orders')" style="color:var(--accent); display:block; margin-bottom:6px;">→ Track an existing order</a>
+      <a href="#" onclick="event.preventDefault(); nav('customercare')" style="color:var(--accent); display:block; margin-bottom:6px;">→ Customer Care / FAQs</a>
+      <a href="#" onclick="event.preventDefault(); nav('shippingreturns')" style="color:var(--accent); display:block;">→ Shipping & Returns policy</a>
+    </div>
+  </section>`;
+}
+
+function viewPrivacy(){
+  const s = DB.storeInfo || {};
+  return `<section class="section wrap" style="max-width:720px;">
+    <div class="section-head"><h2>Privacy Policy</h2></div>
+    <p style="color:var(--ink-dim); font-size:12px; margin-bottom:22px;">Last updated: July 2026</p>
+    <div style="font-size:14px; line-height:1.7; color:var(--ink-dim);">
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">1. Information We Collect</h3>
+      <p>When you create an account, place an order, or write a review, we collect information such as your name, email address, phone number, shipping address, and order history. If you upload a photo with a review, that image is stored along with your review.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">2. How We Use Your Information</h3>
+      <p>We use your information to process orders, provide customer support, send order updates, and improve our products and services. We do not sell your personal data to third parties.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">3. Payment Information</h3>
+      <p>Online payments are processed securely by Razorpay. Vantura does not store your card, UPI, or bank details on its own servers — this information is handled entirely by Razorpay under its own security standards.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">4. Data Storage & Security</h3>
+      <p>Your account details, order history, and preferences are stored securely and protected with industry-standard practices, including encrypted password storage. Access to admin tools is restricted and password-protected.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">5. Cookies & Local Storage</h3>
+      <p>We use your browser's local storage to keep you logged in and to remember your cart and wishlist between visits. This data stays on your device and is used only to improve your shopping experience.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">6. Your Rights</h3>
+      <p>You can update your name, email, and password at any time from My Account. To request a copy of your data or have your account deleted, contact us using the details below.</p>
+
+      <h3 style="color:var(--ink); font-size:16px; margin:20px 0 8px;">7. Contact Us</h3>
+      <p>For any privacy-related questions, reach us at <span class="mono">${s.supportEmail || 'our support email'}</span>.</p>
+    </div>
+  </section>`;
+}
+
+function viewCustomerCare(){
+  const s = DB.storeInfo || {};
+  const faqs = [
+    {q:'How do I track my order?', a:'Go to "Track Order" in the menu and enter the email you used at checkout, or check "My Orders" if you have an account.'},
+    {q:'What payment methods do you accept?', a:'We accept Cash on Delivery, and online payments (Card, UPI, Netbanking) via Razorpay where available.'},
+    {q:'How long does delivery take?', a:'Most orders are delivered within 4–7 business days, depending on your location.'},
+    {q:'What is your return policy?', a:`Items can be returned within ${s.returnWindowDays || 7} days of delivery if unused and in original packaging. See our Shipping & Returns page for full details.`},
+    {q:'How do I change my account email or password?', a:'Go to My Account → Edit Profile. Changing your email or password requires confirming your current password.'},
+    {q:'Do you offer Cash on Delivery?', a:'Yes, Cash on Delivery is available on all orders unless stated otherwise at checkout.'},
+  ];
+  return `<section class="section wrap" style="max-width:680px;">
+    <div class="section-head"><h2>Customer Care</h2></div>
+    <p style="color:var(--ink-dim); margin-bottom:24px;">Answers to common questions. Still stuck? <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); nav('contact')">Contact us</a> directly.</p>
+    ${faqs.map(f=>`
+      <div class="panel" style="margin-bottom:12px;">
+        <h3 style="font-size:14px; margin-bottom:8px;">${f.q}</h3>
+        <p style="font-size:13px; color:var(--ink-dim);">${f.a}</p>
+      </div>`).join('')}
+  </section>`;
+}
+
+function viewShippingReturns(){
+  const s = DB.storeInfo || {};
+  return `<section class="section wrap" style="max-width:680px;">
+    <div class="section-head"><h2>Shipping & Returns</h2></div>
+    <div class="panel" style="margin-bottom:16px;">
+      <h3 style="font-size:15px; margin-bottom:10px;">Shipping</h3>
+      <div class="spec-line"><span>Standard delivery</span><span>4–7 business days</span></div>
+      <div class="spec-line"><span>Shipping charge</span><span>Free above ₹999, else ₹79</span></div>
+      <div class="spec-line" style="border-bottom:0;"><span>Order tracking</span><span>Available under "Track Order"</span></div>
+    </div>
+    <div class="panel" style="margin-bottom:16px;">
+      <h3 style="font-size:15px; margin-bottom:10px;">Returns</h3>
+      <p style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">You can return most items within <strong style="color:var(--ink);">${s.returnWindowDays || 7} days</strong> of delivery, as long as they're unused, undamaged, and in their original packaging.</p>
+      <p style="font-size:13px; color:var(--ink-dim); margin-bottom:10px;">To start a return, contact us with your order number and reason for return. Once approved, we'll share pickup or drop-off instructions.</p>
+      <p style="font-size:13px; color:var(--ink-dim);">Refunds are issued to the original payment method (or store credit for Cash on Delivery orders) within 5–7 business days of the item being received back.</p>
+    </div>
+    <div class="panel">
+      <h3 style="font-size:15px; margin-bottom:10px;">Non-Returnable Items</h3>
+      <p style="font-size:13px; color:var(--ink-dim);">For hygiene and safety reasons, some items (e.g. innerwear, opened personal care products) cannot be returned unless defective. Any exceptions will be noted on the product page.</p>
+    </div>
+  </section>`;
+}
+
 function footer(){
   return `
   <footer class="site">
@@ -1159,13 +1305,13 @@ function footer(){
       </div>
       <div><h4>SUPPORT</h4>
         <a href="#" onclick="event.preventDefault(); nav('orders')">Track an order</a>
-        <a href="#" onclick="event.preventDefault();">Shipping & returns</a>
-        <a href="#" onclick="event.preventDefault();">Size guide</a>
+        <a href="#" onclick="event.preventDefault(); nav('customercare')">Customer Care</a>
+        <a href="#" onclick="event.preventDefault(); nav('shippingreturns')">Shipping & Returns</a>
+        <a href="#" onclick="event.preventDefault(); nav('contact')">Contact Us</a>
       </div>
       <div><h4>STORE</h4>
         <a href="#" onclick="event.preventDefault(); nav('${state.isAdmin?'admin':'admin-login'}')">Owner control panel</a>
-        <a href="#">Wholesale</a>
-        <a href="#">Careers</a>
+        <a href="#" onclick="event.preventDefault(); nav('privacy')">Privacy Policy</a>
       </div>
     </div>
     <div class="wrap" style="margin-top:30px; font-size:11px; color:var(--ink-dim); font-family:'IBM Plex Mono';">© 2026 VANTURA. All rights reserved.</div>
@@ -1478,15 +1624,14 @@ function viewCheckout(){
         </div>
         <div class="panel">
           <h3>Payment Method</h3>
-          ${['Card','UPI','Cash on Delivery'].map(m=>`
+          ${(DB.paymentGatewayEnabled ? ['Razorpay','Cash on Delivery'] : ['Cash on Delivery']).map(m=>`
             <div class="pay-opt ${f.payment===m?'active':''}" onclick="checkoutForm.payment='${m}'; render()">
-              <div class="pay-opt-head"><input type="radio" ${f.payment===m?'checked':''}> ${m}</div>
-              ${f.payment===m && m==='Card' ? `<div class="form-grid" style="margin-top:12px;"><div class="field"><label>Card Number</label><input type="text" placeholder="4242 4242 4242 4242" value="${f.cardNum}" oninput="checkoutForm.cardNum=this.value"></div><div class="field"><label>Expiry / CVC</label><input type="text" placeholder="MM/YY · CVC"></div></div>` : ''}
-              ${f.payment===m && m==='UPI' ? `<div class="field" style="margin-top:12px;"><label>UPI ID</label><input type="text" placeholder="yourname@upi" value="${f.upiId}" oninput="checkoutForm.upiId=this.value"></div>` : ''}
+              <div class="pay-opt-head"><input type="radio" ${f.payment===m?'checked':''}> ${m==='Razorpay' ? 'Pay Online — Card / UPI / Netbanking' : m}</div>
+              ${f.payment===m && m==='Razorpay' ? `<p style="font-size:12px; color:var(--ink-dim); margin-top:10px;">You'll enter your card, UPI, or netbanking details on Razorpay's secure checkout — Vantura never sees your payment details.</p>` : ''}
               ${f.payment===m && m==='Cash on Delivery' ? `<p style="font-size:12px; color:var(--ink-dim); margin-top:10px;">Pay in cash when your order arrives.</p>` : ''}
-              ${m!=='Cash on Delivery' && DB.paymentNote && DB.paymentNote.active && DB.paymentNote.text ? `<p style="font-size:11px; color:var(--gold); margin-top:8px;">${DB.paymentNote.text}</p>` : ''}
+              ${DB.paymentNotes && DB.paymentNotes[m] && DB.paymentNotes[m].active && DB.paymentNotes[m].text ? `<p style="font-size:11px; color:var(--gold); margin-top:8px;">${DB.paymentNotes[m].text}</p>` : ''}
             </div>`).join('')}
-          <p style="font-size:11px; color:var(--ink-dim); margin-top:10px;">Demo checkout — no real payment is charged.</p>
+          ${!DB.paymentGatewayEnabled ? `<p style="font-size:11px; color:var(--ink-dim); margin-top:10px;">Online payment isn't set up yet — Cash on Delivery only for now.</p>` : ''}
         </div>
       </div>
       <div class="summary-box">
@@ -1790,7 +1935,8 @@ function adminSidebar(){
     ${item('coupons','Coupons')}
     ${item('scratch','Scratch Cards')}
     ${item('announcement','Announcement Bar')}
-    ${item('paymentnote','Payment Note')}
+    ${item('paymentnote','Payment Notes')}
+    ${item('storeinfo','Store Info')}
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
     <a href="#" onclick="event.preventDefault(); exportToExcel()" style="color:var(--gold);">⬇ Export to Excel</a>
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
@@ -2113,23 +2259,55 @@ async function saveAnnouncement(){
 }
 
 function adminPaymentNote(){
-  const n = DB.paymentNote || {text:'', active:false};
-  return `<div class="toolbar"><h2 style="font-size:22px;">Payment Note</h2></div>
-  <div class="panel" style="max-width:520px;">
-    <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px;">This short note shows under every payment method at checkout <strong>except Cash on Delivery</strong> — useful for a small handling fee or a note about processing time.</p>
-    <div class="field"><label>Note Text</label><input type="text" id="paymentNoteText" placeholder="e.g. + ₹10 payment handling fee" value="${n.text}"></div>
-    <div class="field"><label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--ink);"><input type="checkbox" id="paymentNoteActive" ${n.active?'checked':''} style="width:auto;">Show this note at checkout</label></div>
-    <button class="btn btn-primary" onclick="savePaymentNote()">Save Changes</button>
-  </div>`;
+  const methods = ['Razorpay', 'Cash on Delivery'];
+  return `<div class="toolbar"><h2 style="font-size:22px;">Payment Notes</h2></div>
+  <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px; max-width:600px;">Set an independent note under each payment method at checkout — a handling fee, processing time, or anything else. Each one can be turned on or off separately.</p>
+  ${methods.map(m=>{
+    const n = (DB.paymentNotes && DB.paymentNotes[m]) || {text:'', active:false};
+    const safeId = m.replace(/[^a-zA-Z0-9]/g,'');
+    return `<div class="panel" style="max-width:520px; margin-bottom:16px;">
+      <h3 style="font-size:15px; margin-bottom:14px;">${m === 'Razorpay' ? 'Online Payment (Razorpay)' : m}</h3>
+      <div class="field"><label>Note Text</label><input type="text" id="paymentNoteText_${safeId}" placeholder="e.g. + ₹49 handling fee" value="${n.text}"></div>
+      <div class="field"><label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--ink);"><input type="checkbox" id="paymentNoteActive_${safeId}" ${n.active?'checked':''} style="width:auto;">Show this note at checkout</label></div>
+      <button class="btn btn-primary btn-sm" onclick="savePaymentNote('${m}','${safeId}')">Save</button>
+    </div>`;
+  }).join('')}`;
 }
-async function savePaymentNote(){
-  const text = document.getElementById('paymentNoteText').value;
-  const active = document.getElementById('paymentNoteActive').checked;
+async function savePaymentNote(method, safeId){
+  const text = document.getElementById('paymentNoteText_' + safeId).value;
+  const active = document.getElementById('paymentNoteActive_' + safeId).checked;
   try{
-    DB.paymentNote = await apiFetch('/payment-note', {method:'PUT', body:JSON.stringify({text, active})});
+    DB.paymentNotes = await apiFetch('/payment-notes', {method:'PUT', body:JSON.stringify({method, text, active})});
     showToast('Payment note updated');
     render();
   } catch(err){ showToast(err.message || 'Could not save payment note'); }
+}
+
+function adminStoreInfo(){
+  const s = DB.storeInfo || {};
+  return `<div class="toolbar"><h2 style="font-size:22px;">Store Info</h2></div>
+  <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px; max-width:600px;">These details show up on the Contact Us page, Customer Care, and shipping/returns policy.</p>
+  <div class="panel" style="max-width:520px;">
+    <div class="field"><label>Support Email</label><input type="email" id="storeSupportEmail" value="${s.supportEmail||''}"></div>
+    <div class="field"><label>Support Phone</label><input type="tel" id="storeSupportPhone" value="${s.supportPhone||''}"></div>
+    <div class="field"><label>Business Address</label><input type="text" id="storeAddress" value="${s.address||''}"></div>
+    <div class="field"><label>Support Hours</label><input type="text" id="storeHours" value="${s.hours||''}" placeholder="e.g. Mon–Sat, 10 AM – 7 PM IST"></div>
+    <div class="field"><label>Return Window (days)</label><input type="number" id="storeReturnDays" value="${s.returnWindowDays||7}"></div>
+    <button class="btn btn-primary" onclick="saveStoreInfo()">Save Changes</button>
+  </div>`;
+}
+async function saveStoreInfo(){
+  try{
+    DB.storeInfo = await apiFetch('/store-info', {method:'PUT', body:JSON.stringify({
+      supportEmail: document.getElementById('storeSupportEmail').value,
+      supportPhone: document.getElementById('storeSupportPhone').value,
+      address: document.getElementById('storeAddress').value,
+      hours: document.getElementById('storeHours').value,
+      returnWindowDays: document.getElementById('storeReturnDays').value,
+    })});
+    showToast('Store info updated');
+    render();
+  } catch(err){ showToast(err.message || 'Could not save store info'); }
 }
 
 function adminReviews(){
@@ -2188,7 +2366,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote};
+  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -2320,6 +2498,7 @@ function render(){
     home:viewHome, shop:viewShop, collections:viewCollections, product:viewProduct,
     cart:viewCart, checkout:viewCheckout, confirmation:viewConfirmation, orders:viewOrders,
     account:viewAccount, wishlist:viewWishlist, myorders:viewMyOrders,
+    contact:viewContact, privacy:viewPrivacy, customercare:viewCustomerCare, shippingreturns:viewShippingReturns,
     'admin-login':viewAdminLogin, admin:viewAdmin,
   };
   const isAdminChrome = state.view==='admin' || (state.view==='admin-login');

@@ -59,7 +59,17 @@ const SEED = {
     {key:'Kitchen', name:'Kitchen', desc:'Tools that make everyday cooking a little easier.', image:''},
   ],
   announcement: {text:'🎉 Free delivery on your first order — no code needed!', active:true},
-  paymentNote: {text:'+ ₹10 payment handling fee', active:false},
+  paymentNotes: {
+    'Razorpay': {text:'100% secure checkout — no extra charges', active:true},
+    'Cash on Delivery': {text:'+ ₹49 COD handling fee', active:true},
+  },
+  storeInfo: {
+    supportEmail: 'support@vantura.example',
+    supportPhone: '+91 98765 43210',
+    address: '12 MG Road, Bengaluru, Karnataka 560001, India',
+    hours: 'Mon–Sat, 10 AM – 7 PM IST',
+    returnWindowDays: 7,
+  },
   orders: [],
   customers: [],
   reviews: [],
@@ -214,6 +224,56 @@ function calcTotals(items, couponCode){
   const tax = round2((subtotal - discount) * 0.18);
   const total = round2(subtotal - discount + shipping + tax);
   return { lineItems, subtotal, discount, shipping, tax, total, couponCode: appliedCode };
+}
+
+/* ============================================================
+   RAZORPAY (online payments)
+   ------------------------------------------------------------
+   Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET as environment
+   variables to enable. Without them, only Cash on Delivery works.
+============================================================ */
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+
+async function razorpayRequest(path, method, body){
+  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString('base64');
+  const res = await fetch(`https://api.razorpay.com/v1/${path}`, {
+    method,
+    headers: {'Content-Type':'application/json', 'Authorization': `Basic ${auth}`},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if(!res.ok) throw {status: res.status >= 400 && res.status < 500 ? 400 : 502, message: (data.error && data.error.description) || 'Razorpay request failed'};
+  return data;
+}
+
+// shared by both Cash on Delivery (direct) and Razorpay (after payment is verified)
+function createOrderRecord(body, paymentInfo){
+  const totals = calcTotals(body.items, body.couponCode);
+  let customer = db.customers.find(c => c.email === body.customer.email);
+  if(!customer){
+    customer = {id: uid('C'), name: body.customer.name, email: body.customer.email, phone: body.customer.phone||'', since: new Date().toISOString().slice(0,10)};
+    db.customers.push(customer);
+  }
+  const order = {
+    id: uid('VT'), customer, items: totals.lineItems,
+    subtotal: totals.subtotal, discount: totals.discount, shipping: totals.shipping, tax: totals.tax, total: totals.total,
+    couponCode: totals.couponCode, payment: paymentInfo.method, status: 'Processing',
+    date: new Date().toISOString(), address: body.address,
+  };
+  if(paymentInfo.razorpayOrderId) order.razorpayOrderId = paymentInfo.razorpayOrderId;
+  if(paymentInfo.razorpayPaymentId) order.razorpayPaymentId = paymentInfo.razorpayPaymentId;
+  const eligible = db.coupons.filter(c => c.active && c.scratchEligible);
+  if(eligible.length){
+    const picked = eligible[Math.floor(Math.random() * eligible.length)];
+    order.scratchReward = {code: picked.code, desc: picked.desc};
+  }
+  order.items.forEach(it => {
+    const p = db.products.find(p => p.id === it.id);
+    if(p) p.stock = Math.max(0, p.stock - it.qty);
+  });
+  db.orders.unshift(order);
+  return order;
 }
 
 /* ============================================================
@@ -405,16 +465,34 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, db.announcement);
     }
 
-    /* ---------- PAYMENT METHOD NOTE ---------- */
-    if(pathname === '/api/payment-note' && req.method === 'GET'){
-      return send(res, 200, db.paymentNote || {text:'', active:false});
+    /* ---------- PAYMENT METHOD NOTES (one per payment method) ---------- */
+    if(pathname === '/api/payment-notes' && req.method === 'GET'){
+      return send(res, 200, db.paymentNotes || {});
     }
-    if(pathname === '/api/payment-note' && req.method === 'PUT'){
+    if(pathname === '/api/payment-notes' && req.method === 'PUT'){
       if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
       const body = await readBody(req);
-      db.paymentNote = {text: body.text || '', active: !!body.active};
+      if(!body.method) return send(res, 400, {message:'A payment method is required'});
+      if(!db.paymentNotes) db.paymentNotes = {};
+      db.paymentNotes[body.method] = {text: body.text || '', active: !!body.active};
       await saveDb();
-      return send(res, 200, db.paymentNote);
+      return send(res, 200, db.paymentNotes);
+    }
+
+    /* ---------- STORE INFO (contact details shown on Contact Us, footer, etc.) ---------- */
+    if(pathname === '/api/store-info' && req.method === 'GET'){
+      return send(res, 200, db.storeInfo || {});
+    }
+    if(pathname === '/api/store-info' && req.method === 'PUT'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const body = await readBody(req);
+      db.storeInfo = {
+        supportEmail: body.supportEmail || '', supportPhone: body.supportPhone || '',
+        address: body.address || '', hours: body.hours || '',
+        returnWindowDays: parseInt(body.returnWindowDays) || 7,
+      };
+      await saveDb();
+      return send(res, 200, db.storeInfo);
     }
 
     /* ---------- ORDERS ---------- */
@@ -424,32 +502,48 @@ const server = http.createServer(async (req, res) => {
       if(!body.customer || !body.customer.email || !body.customer.name) return send(res, 400, {message:'Customer name and email are required'});
       if(!body.address || !body.address.line1 || !body.address.city || !body.address.zip) return send(res, 400, {message:'Shipping address is incomplete'});
 
+      const order = createOrderRecord(body, {method: body.payment || 'Cash on Delivery'});
+      await saveDb();
+      return send(res, 201, order);
+    }
+    if(pathname === '/api/payments/status' && req.method === 'GET'){
+      return send(res, 200, {enabled: !!(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET)});
+    }
+    if(pathname === '/api/payments/create' && req.method === 'POST'){
+      if(!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET){
+        return send(res, 503, {message:'Online payments are not set up yet — please use Cash on Delivery.'});
+      }
+      const body = await readBody(req);
+      if(!body.items || !body.items.length) return send(res, 400, {message:'Cart is empty'});
       const totals = calcTotals(body.items, body.couponCode);
-
-      let customer = db.customers.find(c => c.email === body.customer.email);
-      if(!customer){
-        customer = {id: uid('C'), name: body.customer.name, email: body.customer.email, phone: body.customer.phone||'', since: new Date().toISOString().slice(0,10)};
-        db.customers.push(customer);
+      if(totals.total <= 0) return send(res, 400, {message:'Order total must be greater than zero'});
+      const amountPaise = Math.round(totals.total * 100);
+      const rzpOrder = await razorpayRequest('orders', 'POST', {amount: amountPaise, currency:'INR', receipt: uid('rcpt')});
+      return send(res, 200, {razorpayOrderId: rzpOrder.id, amount: amountPaise, currency:'INR', keyId: RAZORPAY_KEY_ID});
+    }
+    if(pathname === '/api/payments/verify' && req.method === 'POST'){
+      if(!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET){
+        return send(res, 503, {message:'Online payments are not set up yet.'});
       }
-
-      const order = {
-        id: uid('VT'), customer, items: totals.lineItems,
-        subtotal: totals.subtotal, discount: totals.discount, shipping: totals.shipping, tax: totals.tax, total: totals.total,
-        couponCode: totals.couponCode, payment: body.payment || 'Card', status: 'Processing',
-        date: new Date().toISOString(), address: body.address,
-      };
-      // pick one random active, scratch-eligible coupon as this order's scratch-card reward
-      const eligible = db.coupons.filter(c => c.active && c.scratchEligible);
-      if(eligible.length){
-        const picked = eligible[Math.floor(Math.random() * eligible.length)];
-        order.scratchReward = {code: picked.code, desc: picked.desc};
+      const body = await readBody(req);
+      const {razorpay_order_id, razorpay_payment_id, razorpay_signature, orderData} = body;
+      if(!razorpay_order_id || !razorpay_payment_id || !razorpay_signature){
+        return send(res, 400, {message:'Missing payment verification details'});
       }
-      // decrement stock now that order is confirmed
-      order.items.forEach(it => {
-        const p = db.products.find(p => p.id === it.id);
-        if(p) p.stock = Math.max(0, p.stock - it.qty);
+      if(!orderData || !orderData.items || !orderData.customer || !orderData.address){
+        return send(res, 400, {message:'Missing order details'});
+      }
+      const expectedSignature = crypto.createHmac('sha256', RAZORPAY_KEY_SECRET)
+        .update(razorpay_order_id + '|' + razorpay_payment_id)
+        .digest('hex');
+      if(expectedSignature !== razorpay_signature){
+        return send(res, 400, {message:'Payment verification failed — please contact support before retrying.'});
+      }
+      const order = createOrderRecord(orderData, {
+        method: 'Razorpay (Online)',
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
       });
-      db.orders.unshift(order);
       await saveDb();
       return send(res, 201, order);
     }

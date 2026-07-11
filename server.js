@@ -73,6 +73,7 @@ const SEED = {
   orders: [],
   customers: [],
   reviews: [],
+  returns: [],
 };
 
 /* ============================================================
@@ -601,6 +602,50 @@ const server = http.createServer(async (req, res) => {
       if(db.reviews.length === before) return send(res, 404, {message:'Review not found'});
       await saveDb();
       return send(res, 200, {deleted:true});
+    }
+
+    /* ---------- RETURNS ---------- */
+    if(pathname === '/api/returns' && req.method === 'POST'){
+      const body = await readBody(req);
+      if(!body.orderId || !body.reason) return send(res, 400, {message:'Order and reason are required'});
+      const order = db.orders.find(o => o.id === body.orderId);
+      if(!order) return send(res, 404, {message:'Order not found'});
+      if(body.customerEmail && order.customer.email.toLowerCase() !== body.customerEmail.toLowerCase()){
+        return send(res, 403, {message:'This order does not belong to that email'});
+      }
+      if(order.status !== 'Delivered'){
+        return send(res, 400, {message:'Only delivered orders are eligible for return'});
+      }
+      const windowDays = (db.storeInfo && db.storeInfo.returnWindowDays) || 7;
+      const daysSince = (Date.now() - new Date(order.date).getTime()) / (1000*60*60*24);
+      if(daysSince > windowDays){
+        return send(res, 400, {message:`The ${windowDays}-day return window for this order has passed`});
+      }
+      const existing = db.returns.find(r => r.orderId === order.id && r.status !== 'Rejected');
+      if(existing) return send(res, 409, {message:'A return has already been requested for this order'});
+      const ret = {
+        id: uid('RT'), orderId: order.id, customerName: order.customer.name, customerEmail: order.customer.email,
+        reason: (body.reason || '').toString().slice(0, 500), status: 'Requested',
+        date: new Date().toISOString(), refundAmount: order.total,
+      };
+      db.returns.unshift(ret);
+      await saveDb();
+      return send(res, 201, ret);
+    }
+    if(pathname === '/api/returns' && req.method === 'GET'){
+      const email = parsed.searchParams.get('email');
+      if(email) return send(res, 200, db.returns.filter(r => r.customerEmail.toLowerCase() === email.toLowerCase()));
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required to view all returns'});
+      return send(res, 200, db.returns);
+    }
+    if(parts[1] === 'returns' && parts[2] && req.method === 'PATCH'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const ret = db.returns.find(r => r.id === parts[2]);
+      if(!ret) return send(res, 404, {message:'Return request not found'});
+      const body = await readBody(req);
+      if(body.status) ret.status = body.status;
+      await saveDb();
+      return send(res, 200, ret);
     }
 
     /* ---------- CUSTOMERS (admin only) ---------- */

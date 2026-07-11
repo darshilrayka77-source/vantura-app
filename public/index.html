@@ -293,6 +293,7 @@ const DB = {
   customers: [],
   collections: [],
   reviews: [],
+  returns: [],
   announcement: {text:'', active:false},
   paymentNotes: {},
   storeInfo: {},
@@ -388,6 +389,7 @@ const state = {
   profileDraft:{name:'', email:'', phone:'', currentPassword:'', newPassword:''},
   bulkImportRows:[],
   bulkImportFileName:'',
+  returns:[],
   mobileMenuOpen:false,
   wishlist:[],
   announceDismissed:false,
@@ -621,6 +623,7 @@ async function loadMyAccountOrders(){
     state.myAccountOrders = data.orders;
     state.myAccountOrdersLoading = false;
     mergeOrders(data.orders);
+    try{ state.returns = await apiFetch('/returns?email=' + encodeURIComponent(data.customer.email)); }catch(e){}
     render();
   } catch(err){
     // token expired/invalid (e.g. server restarted) — sign the customer out quietly
@@ -863,6 +866,22 @@ async function deleteCoupon(code){
   } catch(err){ showToast(err.message || 'Could not delete coupon'); }
 }
 function closeModal(){ state.modal=null; render(); }
+function openReturnModal(orderId){
+  state.modal = {type:'returnRequest', data:{orderId, reason:''}};
+  render();
+}
+async function submitReturnRequest(){
+  const d = state.modal.data;
+  if(!d.reason || !d.reason.trim()){ showToast('Please describe the reason for return'); return; }
+  const email = state.customer ? state.customer.email : state.myOrdersEmail;
+  try{
+    const ret = await apiFetch('/returns', {method:'POST', body:JSON.stringify({orderId:d.orderId, reason:d.reason.trim(), customerEmail: email})});
+    state.returns = [ret, ...(state.returns||[])];
+    state.modal = null;
+    showToast('Return request submitted');
+    render();
+  } catch(err){ showToast(err.message || 'Could not submit return request'); }
+}
 
 /* ============================================================
    INVOICE (PDF via jsPDF)
@@ -1771,6 +1790,7 @@ async function findMyOrders(){
     mergeOrders(orders);
     state.myOrdersResults = orders;
     state.myOrdersSearched = true;
+    try{ state.returns = await apiFetch('/returns?email=' + encodeURIComponent(email)); }catch(e){}
     render();
   } catch(err){ showToast(err.message || 'Could not look up orders'); }
 }
@@ -1779,6 +1799,10 @@ async function findMyOrders(){
    VIEWS — CUSTOMER ACCOUNT
 ============================================================ */
 function orderCard(o){
+  const existingReturn = (state.returns||[]).find(r => r.orderId === o.id);
+  const windowDays = (DB.storeInfo && DB.storeInfo.returnWindowDays) || 7;
+  const daysSince = (Date.now() - new Date(o.date).getTime()) / (1000*60*60*24);
+  const canReturn = o.status === 'Delivered' && !existingReturn && daysSince <= windowDays;
   return `<div class="panel" style="margin-top:14px;">
     <div class="toolbar"><div><strong>${o.id}</strong> <span class="card-cat">· ${new Date(o.date).toLocaleDateString()}</span></div>
       <span class="status-pill status-${o.status.replace(/ /g,'-')}">${o.status}</span></div>
@@ -1787,7 +1811,11 @@ function orderCard(o){
       ${o.items.map(it=>`<div class="summary-line"><span>${it.name} × ${it.qty}</span><span class="mono">${fmt(it.price*it.qty)}</span></div>`).join('')}
       <div class="summary-line total"><span>Total</span><span>${fmt(o.total)}</span></div>
     </div>
-    <button class="btn btn-outline btn-sm" style="margin-top:10px;" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
+    ${existingReturn ? `<div style="margin-top:10px; display:flex; align-items:center; gap:8px;"><span style="font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em;">Return:</span><span class="status-pill" style="background:rgba(224,102,30,.15); color:var(--accent);">${existingReturn.status}</span></div>` : ''}
+    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+      <button class="btn btn-outline btn-sm" onclick="downloadInvoicePDF('${o.id}')">Download Invoice PDF</button>
+      ${canReturn ? `<button class="btn btn-outline btn-sm" onclick="openReturnModal('${o.id}')">Request Return</button>` : ''}
+    </div>
   </div>`;
 }
 function viewMyOrders(){
@@ -1890,8 +1918,8 @@ async function adminLogin(){
     state.isAdmin = true;
     localStorage.setItem('vantura_admin_token', data.token);
     localStorage.setItem('vantura_was_admin', 'true');
-    const [orders, customers, collections, reviews] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews;
+    const [orders, customers, collections, reviews, returns] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns;
     nav('admin');
   } catch(err){ showToast(err.message || 'Incorrect password'); }
 }
@@ -1908,8 +1936,8 @@ async function restoreAdminAuth(){
   if(!token || !wasAdmin) return;
   authToken = token;
   try{
-    const [orders, customers, collections, reviews] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews;
+    const [orders, customers, collections, reviews, returns] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns;
     state.isAdmin = true;
     state.adminView = localStorage.getItem('vantura_admin_view') || 'dashboard';
     state.view = 'admin';
@@ -1931,6 +1959,7 @@ function adminSidebar(){
     ${item('collections','Collections')}
     ${item('reviews','Reviews')}
     ${item('orders','Orders')}
+    ${item('returns','Returns')}
     ${item('customers','Customers')}
     ${item('coupons','Coupons')}
     ${item('scratch','Scratch Cards')}
@@ -2129,6 +2158,37 @@ function adminOrders(){
       </tr>`).join('')}</tbody></table>
   </div>`;
 }
+
+function adminReturns(){
+  const statuses = ['Requested','Approved','Rejected','Picked Up','Refunded'];
+  const returns = DB.returns || [];
+  return `<div class="toolbar"><h2 style="font-size:22px;">Returns (${returns.length})</h2></div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Reason</th><th>Refund</th><th>Status</th></tr></thead>
+    <tbody>${returns.length ? returns.map(r=>`
+      <tr>
+        <td class="mono">${r.orderId}</td>
+        <td>${r.customerName}<br><span class="card-cat">${r.customerEmail}</span></td>
+        <td>${new Date(r.date).toLocaleDateString()}</td>
+        <td style="max-width:260px; font-size:12px;">${r.reason}</td>
+        <td class="mono">${fmt(r.refundAmount)}</td>
+        <td><select style="width:140px;" onchange="updateReturnStatus('${r.id}', this.value)">
+          ${statuses.map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></td>
+      </tr>`).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-dim); padding:24px;">No return requests yet</td></tr>`}
+    </tbody></table>
+  </div>`;
+}
+async function updateReturnStatus(id, status){
+  try{
+    const ret = await apiFetch('/returns/' + id, {method:'PATCH', body:JSON.stringify({status})});
+    const idx = DB.returns.findIndex(r=>r.id===id);
+    if(idx>=0) DB.returns[idx] = ret;
+    showToast('Return status updated');
+    render();
+  } catch(err){ showToast(err.message || 'Could not update return status'); render(); }
+}
+
 
 function adminCustomers(){
   const rows = DB.customers.map(c=>{
@@ -2366,7 +2426,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
+  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, returns:adminReturns, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -2454,6 +2514,20 @@ function modalHtml(){
         <div class="field"><label>Image URL <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="text" placeholder="https://images.example.com/photo.jpg" value="${d.image||''}" oninput="state.modal.data.image=this.value"></div>
         <div style="display:flex; gap:10px; margin-top:16px;">
           <button class="btn btn-primary" onclick="saveCollectionModal()">Save Collection</button>
+          <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  }
+  if(state.modal.type==='returnRequest'){
+    const d = state.modal.data;
+    return `<div class="modal-bg" onclick="if(event.target===this) closeModal()">
+      <div class="modal">
+        <h3>Request Return</h3>
+        <p style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Order ${d.orderId}</p>
+        <div class="field"><label>Reason for return</label><textarea rows="4" placeholder="Tell us what went wrong..." oninput="state.modal.data.reason=this.value">${d.reason}</textarea></div>
+        <div style="display:flex; gap:10px; margin-top:16px;">
+          <button class="btn btn-primary" onclick="submitReturnRequest()">Submit Request</button>
           <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
         </div>
       </div>

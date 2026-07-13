@@ -74,6 +74,7 @@ const SEED = {
   customers: [],
   reviews: [],
   returns: [],
+  heroSlides: [],
 };
 
 /* ============================================================
@@ -480,6 +481,33 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, db.paymentNotes);
     }
 
+    /* ---------- HOME PAGE SLIDESHOW ---------- */
+    if(pathname === '/api/hero-slides' && req.method === 'GET'){
+      return send(res, 200, db.heroSlides || []);
+    }
+    if(pathname === '/api/hero-slides' && req.method === 'POST'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const body = await readBody(req);
+      if(!body.image) return send(res, 400, {message:'An image is required'});
+      const slide = {
+        id: uid('SL'), image: body.image,
+        title: (body.title || '').toString().slice(0, 80),
+        subtitle: (body.subtitle || '').toString().slice(0, 140),
+      };
+      if(!db.heroSlides) db.heroSlides = [];
+      db.heroSlides.push(slide);
+      await saveDb();
+      return send(res, 201, slide);
+    }
+    if(parts[1] === 'hero-slides' && parts[2] && req.method === 'DELETE'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const before = (db.heroSlides || []).length;
+      db.heroSlides = (db.heroSlides || []).filter(s => s.id !== parts[2]);
+      if(db.heroSlides.length === before) return send(res, 404, {message:'Slide not found'});
+      await saveDb();
+      return send(res, 200, {deleted:true});
+    }
+
     /* ---------- STORE INFO (contact details shown on Contact Us, footer, etc.) ---------- */
     if(pathname === '/api/store-info' && req.method === 'GET'){
       return send(res, 200, db.storeInfo || {});
@@ -607,7 +635,7 @@ const server = http.createServer(async (req, res) => {
     /* ---------- RETURNS ---------- */
     if(pathname === '/api/returns' && req.method === 'POST'){
       const body = await readBody(req);
-      if(!body.orderId || !body.reason) return send(res, 400, {message:'Order and reason are required'});
+      if(!body.orderId || !body.reasonCategory) return send(res, 400, {message:'Order and a reason are required'});
       const order = db.orders.find(o => o.id === body.orderId);
       if(!order) return send(res, 404, {message:'Order not found'});
       if(body.customerEmail && order.customer.email.toLowerCase() !== body.customerEmail.toLowerCase()){
@@ -623,9 +651,15 @@ const server = http.createServer(async (req, res) => {
       }
       const existing = db.returns.find(r => r.orderId === order.id && r.status !== 'Rejected');
       if(existing) return send(res, 409, {message:'A return has already been requested for this order'});
+      if(body.image && typeof body.image === 'string' && body.image.length > 2 * 1024 * 1024){
+        return send(res, 413, {message:'That photo is too large — please use a smaller image'});
+      }
       const ret = {
         id: uid('RT'), orderId: order.id, customerName: order.customer.name, customerEmail: order.customer.email,
-        reason: (body.reason || '').toString().slice(0, 500), status: 'Requested',
+        reasonCategory: (body.reasonCategory || 'Other').toString().slice(0, 60),
+        reason: (body.reason || '').toString().slice(0, 500),
+        image: body.image || '',
+        status: 'Requested',
         date: new Date().toISOString(), refundAmount: order.total,
       };
       db.returns.unshift(ret);
@@ -643,7 +677,42 @@ const server = http.createServer(async (req, res) => {
       const ret = db.returns.find(r => r.id === parts[2]);
       if(!ret) return send(res, 404, {message:'Return request not found'});
       const body = await readBody(req);
+      if(body.status === 'Refunded'){
+        return send(res, 400, {message:'Use the refund action to mark a return as refunded'});
+      }
       if(body.status) ret.status = body.status;
+      await saveDb();
+      return send(res, 200, ret);
+    }
+    if(parts[1] === 'returns' && parts[2] && parts[3] === 'refund' && req.method === 'POST'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const ret = db.returns.find(r => r.id === parts[2]);
+      if(!ret) return send(res, 404, {message:'Return request not found'});
+      if(ret.status === 'Refunded') return send(res, 400, {message:'This return has already been refunded'});
+      if(ret.status === 'Rejected') return send(res, 400, {message:'Cannot refund a rejected return'});
+      const order = db.orders.find(o => o.id === ret.orderId);
+      if(!order) return send(res, 404, {message:'Original order for this return was not found'});
+      const body = await readBody(req);
+
+      if(order.payment === 'Razorpay' && order.razorpayPaymentId && RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET){
+        // real refund via Razorpay — money actually goes back to the customer's original payment method
+        const amountPaise = Math.round(ret.refundAmount * 100);
+        const refund = await razorpayRequest(`payments/${order.razorpayPaymentId}/refund`, 'POST', {amount: amountPaise});
+        ret.status = 'Refunded';
+        ret.refundMethod = 'Razorpay';
+        ret.refundReference = refund.id;
+        ret.refundDate = new Date().toISOString();
+      } else {
+        // Cash on Delivery (or Razorpay not configured) — no online payment to reverse,
+        // so the admin confirms they've sent the money back manually (bank transfer, etc.)
+        if(!body.reference || !body.reference.trim()){
+          return send(res, 400, {message:'Enter a reference (e.g. bank transfer UTR number) to confirm this manual refund'});
+        }
+        ret.status = 'Refunded';
+        ret.refundMethod = 'Manual';
+        ret.refundReference = body.reference.trim();
+        ret.refundDate = new Date().toISOString();
+      }
       await saveDb();
       return send(res, 200, ret);
     }

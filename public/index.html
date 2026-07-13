@@ -294,6 +294,7 @@ const DB = {
   collections: [],
   reviews: [],
   returns: [],
+  heroSlides: [],
   announcement: {text:'', active:false},
   paymentNotes: {},
   storeInfo: {},
@@ -330,7 +331,7 @@ function mergeOrders(list){
 async function loadCatalog(){
   document.getElementById('app').innerHTML = `<div style="padding:120px 20px; text-align:center; color:var(--ink-dim); font-family:'Inter',sans-serif;">Loading Vantura…</div>`;
   try{
-    const [products, coupons, collections, announcement, paymentNotes, paymentStatus, storeInfo] = await Promise.all([
+    const [products, coupons, collections, announcement, paymentNotes, paymentStatus, storeInfo, heroSlides] = await Promise.all([
       apiFetch('/products'),
       apiFetch('/coupons'),
       apiFetch('/collections'),
@@ -338,6 +339,7 @@ async function loadCatalog(){
       apiFetch('/payment-notes'),
       apiFetch('/payments/status'),
       apiFetch('/store-info'),
+      apiFetch('/hero-slides'),
     ]);
     DB.products = products;
     DB.coupons = coupons;
@@ -346,8 +348,10 @@ async function loadCatalog(){
     DB.paymentNotes = paymentNotes;
     DB.paymentGatewayEnabled = paymentStatus.enabled;
     DB.storeInfo = storeInfo;
+    DB.heroSlides = heroSlides;
     if(!DB.paymentGatewayEnabled) checkoutForm.payment = 'Cash on Delivery';
     render();
+    if(state.view==='home') startHeroSlideshow();
   } catch(err){
     document.getElementById('app').innerHTML = `
       <div style="max-width:480px; margin:100px auto; text-align:center; font-family:'Inter',sans-serif; color:var(--ink); padding:0 20px;">
@@ -391,6 +395,8 @@ const state = {
   bulkImportFileName:'',
   returns:[],
   mobileMenuOpen:false,
+  heroSlideIndex:0,
+  newSlideImage:null,
   wishlist:[],
   announceDismissed:false,
 };
@@ -467,6 +473,7 @@ function nav(view, extra={}){
   Object.assign(state, {view}, extra);
   window.scrollTo(0,0);
   render();
+  if(view==='home') startHeroSlideshow(); else clearInterval(window.__heroTimer);
   // silently refresh the catalog whenever entering a browsing view, so
   // products added/edited elsewhere (e.g. by the admin) always show up
   if(['shop','home','collections'].includes(view)){
@@ -480,6 +487,15 @@ function nav(view, extra={}){
   if(view==='product' && extra.productId){ state.productReviewsLoading = true; state.productReviews = []; loadProductReviews(extra.productId); }
 }
 function showToast(msg){ state.toast = msg; render(); clearTimeout(window.__t); window.__t = setTimeout(()=>{state.toast=null; render();},2400); }
+function startHeroSlideshow(){
+  clearInterval(window.__heroTimer);
+  window.__heroTimer = setInterval(() => {
+    const slides = DB.heroSlides || [];
+    if(slides.length < 2) return;
+    state.heroSlideIndex = (state.heroSlideIndex + 1) % slides.length;
+    render();
+  }, 4500);
+}
 function togglePasswordVisibility(btn){
   const input = btn.previousElementSibling;
   if(!input) return;
@@ -866,16 +882,29 @@ async function deleteCoupon(code){
   } catch(err){ showToast(err.message || 'Could not delete coupon'); }
 }
 function closeModal(){ state.modal=null; render(); }
+const RETURN_REASONS = ['Wrong item received', 'Item damaged or defective', 'Item not as described', 'Changed my mind', 'Found a better price', 'Other'];
 function openReturnModal(orderId){
-  state.modal = {type:'returnRequest', data:{orderId, reason:''}};
+  state.modal = {type:'returnRequest', data:{orderId, reasonCategory:RETURN_REASONS[0], reason:'', image:null}};
   render();
 }
+async function pickReturnImage(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Please choose an image file'); return; }
+  try{
+    state.modal.data.image = await compressImageFile(file);
+    render();
+  } catch(err){ showToast(err.message || 'Could not read that image'); }
+}
+function removeReturnImage(){ state.modal.data.image = null; render(); }
 async function submitReturnRequest(){
   const d = state.modal.data;
-  if(!d.reason || !d.reason.trim()){ showToast('Please describe the reason for return'); return; }
+  if(!d.reasonCategory){ showToast('Please select a reason for return'); return; }
   const email = state.customer ? state.customer.email : state.myOrdersEmail;
   try{
-    const ret = await apiFetch('/returns', {method:'POST', body:JSON.stringify({orderId:d.orderId, reason:d.reason.trim(), customerEmail: email})});
+    const ret = await apiFetch('/returns', {method:'POST', body:JSON.stringify({
+      orderId:d.orderId, reasonCategory:d.reasonCategory, reason:(d.reason||'').trim(), image:d.image||'', customerEmail: email,
+    })});
     state.returns = [ret, ...(state.returns||[])];
     state.modal = null;
     showToast('Return request submitted');
@@ -1362,10 +1391,25 @@ function viewHome(){
           <button class="btn btn-outline" onclick="nav('collections')">Browse Collections</button>
         </div>
       </div>
-      <div class="hero-visual">
-        <span class="elev-tag a">4.7★ AVG RATING</span>
-        ${HERO_ICON}
-        <span class="elev-tag b">7-12 DAY DELIVERY</span>
+      <div class="hero-visual" style="overflow:hidden; padding:0;">
+        ${(() => {
+          const slides = DB.heroSlides || [];
+          if(!slides.length){
+            return `<span class="elev-tag a">4.7★ AVG RATING</span>${HERO_ICON}<span class="elev-tag b">7-12 DAY DELIVERY</span>`;
+          }
+          const idx = state.heroSlideIndex % slides.length;
+          const slide = slides[idx];
+          return `
+            <img src="${slide.image}" style="width:100%; height:100%; object-fit:cover; display:block;">
+            ${(slide.title || slide.subtitle) ? `<div style="position:absolute; bottom:14px; left:14px; right:14px; background:rgba(16,17,20,.72); padding:10px 14px; border-radius:4px;">
+              ${slide.title ? `<div style="font-weight:600; font-size:14px; color:#fff;">${slide.title}</div>` : ''}
+              ${slide.subtitle ? `<div style="font-size:12px; color:#ccc;">${slide.subtitle}</div>` : ''}
+            </div>` : ''}
+            ${slides.length>1 ? `<div style="position:absolute; top:12px; right:12px; display:flex; gap:6px;">
+              ${slides.map((s,i)=>`<span style="width:6px; height:6px; border-radius:50%; background:${i===idx?'var(--accent)':'rgba(255,255,255,.4)'};"></span>`).join('')}
+            </div>` : ''}
+          `;
+        })()}
       </div>
     </div>
   </section>
@@ -1955,6 +1999,7 @@ function adminSidebar(){
   return `<div class="admin-side">
     ${item('dashboard','Dashboard')}
     ${item('products','Products')}
+    ${item('heroslides','Home Slideshow')}
     ${item('bulkimport','Bulk Import (CSV)')}
     ${item('collections','Collections')}
     ${item('reviews','Reviews')}
@@ -2160,24 +2205,51 @@ function adminOrders(){
 }
 
 function adminReturns(){
-  const statuses = ['Requested','Approved','Rejected','Picked Up','Refunded'];
+  const statuses = ['Requested','Approved','Rejected','Picked Up']; // Refunded is set only via the refund action below
   const returns = DB.returns || [];
   return `<div class="toolbar"><h2 style="font-size:22px;">Returns (${returns.length})</h2></div>
   <div class="panel" style="padding:0;">
-    <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Reason</th><th>Refund</th><th>Status</th></tr></thead>
-    <tbody>${returns.length ? returns.map(r=>`
+    <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Reason</th><th>Photo</th><th>Refund Amt.</th><th>Status</th><th>Refund</th></tr></thead>
+    <tbody>${returns.length ? returns.map(r=>{
+      const order = DB.orders.find(o=>o.id===r.orderId);
+      const isRazorpay = order && order.payment === 'Razorpay' && order.razorpayPaymentId;
+      return `
       <tr>
         <td class="mono">${r.orderId}</td>
         <td>${r.customerName}<br><span class="card-cat">${r.customerEmail}</span></td>
         <td>${new Date(r.date).toLocaleDateString()}</td>
-        <td style="max-width:260px; font-size:12px;">${r.reason}</td>
+        <td style="max-width:220px; font-size:12px;"><strong>${r.reasonCategory||'—'}</strong>${r.reason?`<br><span style="color:var(--ink-dim);">${r.reason}</span>`:''}</td>
+        <td>${r.image ? `<img src="${r.image}" style="width:40px; height:40px; object-fit:cover; border-radius:3px; cursor:pointer;" onclick="window.open('${r.image}','_blank')">` : '—'}</td>
         <td class="mono">${fmt(r.refundAmount)}</td>
-        <td><select style="width:140px;" onchange="updateReturnStatus('${r.id}', this.value)">
-          ${statuses.map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s}</option>`).join('')}
-        </select></td>
-      </tr>`).join('') : `<tr><td colspan="6" style="text-align:center; color:var(--ink-dim); padding:24px;">No return requests yet</td></tr>`}
+        <td>${r.status==='Refunded'
+          ? `<span class="status-pill" style="background:rgba(92,148,99,.2); color:var(--ok);">Refunded</span>`
+          : `<select style="width:130px;" onchange="updateReturnStatus('${r.id}', this.value)">
+              ${statuses.map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${s}</option>`).join('')}
+            </select>`}</td>
+        <td>${r.status==='Refunded'
+          ? `<span style="font-size:11px; color:var(--ink-dim);">${r.refundMethod} · ${r.refundReference}</span>`
+          : (r.status==='Rejected' ? '—' : `<button class="btn-ghost" onclick="processRefund('${r.id}', ${isRazorpay})">${isRazorpay ? 'Refund via Razorpay' : 'Mark Refunded'}</button>`)}</td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="8" style="text-align:center; color:var(--ink-dim); padding:24px;">No return requests yet</td></tr>`}
     </tbody></table>
   </div>`;
+}
+async function processRefund(id, isRazorpay){
+  let reference = null;
+  if(!isRazorpay){
+    reference = prompt('Enter a reference for this manual refund (e.g. bank transfer UTR number):');
+    if(reference === null) return; // cancelled
+    if(!reference.trim()){ showToast('A reference is required to confirm the refund'); return; }
+  } else {
+    if(!confirm('Process this refund through Razorpay now? This will actually return the money to the customer.')) return;
+  }
+  try{
+    const ret = await apiFetch('/returns/' + id + '/refund', {method:'POST', body:JSON.stringify({reference})});
+    const idx = DB.returns.findIndex(r=>r.id===id);
+    if(idx>=0) DB.returns[idx] = ret;
+    showToast('Refund processed');
+    render();
+  } catch(err){ showToast(err.message || 'Could not process refund'); render(); }
 }
 async function updateReturnStatus(id, status){
   try{
@@ -2343,6 +2415,66 @@ async function savePaymentNote(method, safeId){
   } catch(err){ showToast(err.message || 'Could not save payment note'); }
 }
 
+function adminHeroSlides(){
+  const slides = DB.heroSlides || [];
+  return `<div class="toolbar"><h2 style="font-size:22px;">Home Slideshow (${slides.length})</h2></div>
+  <div class="panel" style="max-width:560px;">
+    <h3 style="font-size:15px; margin-bottom:14px;">Add a Slide</h3>
+    <div class="field"><label>Image URL</label><input type="text" id="newSlideUrl" placeholder="https://images.example.com/banner.jpg"></div>
+    <div class="field"><label>Or upload from your device</label><input type="file" accept="image/*" onchange="pickHeroSlideImage(this)"></div>
+    ${state.newSlideImage ? `<div style="margin:10px 0;"><img src="${state.newSlideImage}" style="width:140px; height:80px; object-fit:cover; border-radius:4px;"></div>` : ''}
+    <div class="field"><label>Title <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="text" id="newSlideTitle" placeholder="e.g. New Season Arrivals"></div>
+    <div class="field"><label>Subtitle <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><input type="text" id="newSlideSubtitle" placeholder="e.g. Up to 30% off electronics"></div>
+    <button class="btn btn-primary" onclick="addHeroSlide()">Add Slide</button>
+  </div>
+  <div class="panel" style="margin-top:18px;">
+    <h3 style="font-size:15px; margin-bottom:14px;">Current Slides</h3>
+    ${slides.length ? `<div style="display:flex; flex-wrap:wrap; gap:14px;">
+      ${slides.map(s=>`
+        <div style="width:160px;">
+          <div style="position:relative;">
+            <img src="${s.image}" style="width:160px; height:100px; object-fit:cover; border-radius:4px; display:block;">
+            <button type="button" onclick="deleteHeroSlide('${s.id}')" style="position:absolute; top:4px; right:4px; background:rgba(0,0,0,.75); color:#fff; border:0; border-radius:50%; width:22px; height:22px; font-size:13px; cursor:pointer;">×</button>
+          </div>
+          ${s.title ? `<div style="font-size:12px; margin-top:6px; font-weight:600;">${s.title}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>` : `<p style="color:var(--ink-dim); font-size:13px;">No slides yet — the hero shows a default graphic until you add one.</p>`}
+  </div>`;
+}
+async function pickHeroSlideImage(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ showToast('Please choose an image file'); return; }
+  try{
+    state.newSlideImage = await compressImageFile(file);
+    render();
+  } catch(err){ showToast(err.message || 'Could not read that image'); }
+}
+async function addHeroSlide(){
+  const url = document.getElementById('newSlideUrl').value.trim();
+  const title = document.getElementById('newSlideTitle').value.trim();
+  const subtitle = document.getElementById('newSlideSubtitle').value.trim();
+  const image = state.newSlideImage || url;
+  if(!image){ showToast('Add an image URL or upload a photo'); return; }
+  try{
+    const slide = await apiFetch('/hero-slides', {method:'POST', body:JSON.stringify({image, title, subtitle})});
+    DB.heroSlides.push(slide);
+    state.newSlideImage = null;
+    showToast('Slide added');
+    render();
+  } catch(err){ showToast(err.message || 'Could not add slide'); }
+}
+async function deleteHeroSlide(id){
+  if(!confirm('Remove this slide?')) return;
+  try{
+    await apiFetch('/hero-slides/' + id, {method:'DELETE'});
+    DB.heroSlides = DB.heroSlides.filter(s=>s.id!==id);
+    showToast('Slide removed');
+    render();
+  } catch(err){ showToast(err.message || 'Could not remove slide'); }
+}
+
 function adminStoreInfo(){
   const s = DB.storeInfo || {};
   return `<div class="toolbar"><h2 style="font-size:22px;">Store Info</h2></div>
@@ -2426,7 +2558,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, returns:adminReturns, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
+  const map = {dashboard:adminDashboard, products:adminProducts, heroslides:adminHeroSlides, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, returns:adminReturns, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 
@@ -2525,7 +2657,18 @@ function modalHtml(){
       <div class="modal">
         <h3>Request Return</h3>
         <p style="font-size:12px; color:var(--ink-dim); margin-bottom:14px;">Order ${d.orderId}</p>
-        <div class="field"><label>Reason for return</label><textarea rows="4" placeholder="Tell us what went wrong..." oninput="state.modal.data.reason=this.value">${d.reason}</textarea></div>
+        <div class="field">
+          <label>Why are you returning this?</label>
+          <select onchange="state.modal.data.reasonCategory=this.value">
+            ${RETURN_REASONS.map(r=>`<option value="${r}" ${d.reasonCategory===r?'selected':''}>${r}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Additional details <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional)</span></label><textarea rows="3" placeholder="Anything else we should know?" oninput="state.modal.data.reason=this.value">${d.reason}</textarea></div>
+        <div class="field">
+          <label>Add a Photo <span style="color:var(--ink-dim); text-transform:none; letter-spacing:0;">(optional — helps us process faster)</span></label>
+          <input type="file" accept="image/*" onchange="pickReturnImage(this)">
+          ${d.image ? `<div style="position:relative; width:90px; margin-top:10px;"><img src="${d.image}" style="width:90px; height:90px; object-fit:cover; border-radius:4px;"><button type="button" onclick="removeReturnImage()" style="position:absolute; top:-6px; right:-6px; background:rgba(0,0,0,.75); color:#fff; border:0; border-radius:50%; width:20px; height:20px; font-size:12px; cursor:pointer;">×</button></div>` : ''}
+        </div>
         <div style="display:flex; gap:10px; margin-top:16px;">
           <button class="btn btn-primary" onclick="submitReturnRequest()">Submit Request</button>
           <button class="btn btn-outline" onclick="closeModal()">Cancel</button>

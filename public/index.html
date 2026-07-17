@@ -295,6 +295,8 @@ const DB = {
   reviews: [],
   returns: [],
   heroSlides: [],
+  monthlyReports: [],
+  yearlyReports: [],
   announcement: {text:'', active:false},
   paymentNotes: {},
   storeInfo: {},
@@ -349,6 +351,7 @@ async function loadCatalog(){
     DB.paymentGatewayEnabled = paymentStatus.enabled;
     DB.storeInfo = storeInfo;
     DB.heroSlides = heroSlides;
+    pruneWishlist();
     if(!DB.paymentGatewayEnabled) checkoutForm.payment = 'Cash on Delivery';
     render();
     if(state.view==='home') startHeroSlideshow();
@@ -390,6 +393,7 @@ const state = {
   reviewDraft:{rating:5, text:'', image:null, name:''},
   adminReviewCategory:'All',
   filtersOpen:false,
+  adminReportTab:'monthly',
   profileDraft:{name:'', email:'', phone:'', currentPassword:'', newPassword:''},
   bulkImportRows:[],
   bulkImportFileName:'',
@@ -436,11 +440,21 @@ async function refreshWishlistFromServer(){
   try{
     const data = await customerFetch('/auth/me');
     mergeServerWishlist(data.wishlist);
+    pruneWishlist();
     try{ localStorage.setItem('vantura_wishlist', JSON.stringify(state.wishlist)); }catch(e){}
     render();
   } catch(e){ /* token may be stale — the account page will sign them out cleanly if so */ }
 }
 function isWishlisted(id){ return state.wishlist.includes(id); }
+function pruneWishlist(){
+  if(!DB.products.length) return; // catalog hasn't loaded yet — don't wipe wishlist based on an empty product list
+  const valid = state.wishlist.filter(id => findProduct(id));
+  if(valid.length !== state.wishlist.length){
+    state.wishlist = valid;
+    try{ localStorage.setItem('vantura_wishlist', JSON.stringify(state.wishlist)); }catch(e){}
+    syncWishlistToServer();
+  }
+}
 function toggleWishlist(id, event){
   if(event) event.stopPropagation(); // don't trigger the product card's own click-through to the product page
   if(state.wishlist.includes(id)){
@@ -477,7 +491,7 @@ function nav(view, extra={}){
   // silently refresh the catalog whenever entering a browsing view, so
   // products added/edited elsewhere (e.g. by the admin) always show up
   if(['shop','home','collections'].includes(view)){
-    apiFetch('/products').then(products => { DB.products = products; render(); }).catch(()=>{});
+    apiFetch('/products').then(products => { DB.products = products; pruneWishlist(); render(); }).catch(()=>{});
   }
   if(view==='account' && state.customer){
     state.myAccountOrdersLoading = true; loadMyAccountOrders();
@@ -1962,8 +1976,8 @@ async function adminLogin(){
     state.isAdmin = true;
     localStorage.setItem('vantura_admin_token', data.token);
     localStorage.setItem('vantura_was_admin', 'true');
-    const [orders, customers, collections, reviews, returns] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns;
+    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports;
     nav('admin');
   } catch(err){ showToast(err.message || 'Incorrect password'); }
 }
@@ -1974,14 +1988,160 @@ async function adminLogout(){
   localStorage.removeItem('vantura_was_admin');
   nav('home');
 }
+function adminReports(){
+  const tab = state.adminReportTab || 'monthly';
+  const monthly = DB.monthlyReports || [];
+  const yearly = DB.yearlyReports || [];
+  const list = tab === 'monthly' ? monthly : yearly;
+  return `<div class="toolbar">
+    <h2 style="font-size:22px;">Reports</h2>
+    <button class="btn btn-outline btn-sm" onclick="generateReportsNow()">↻ Generate Current Month/Year Now</button>
+  </div>
+  <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px; max-width:640px;">Each completed month and year automatically gets its own saved report the next time the server starts up after it ends — these stay here permanently, even after a dashboard reset. Use the button above to also snapshot the current, still-in-progress period right now.</p>
+  <div style="display:flex; gap:8px; margin-bottom:16px;">
+    <button class="btn ${tab==='monthly'?'btn-primary':'btn-outline'} btn-sm" onclick="state.adminReportTab='monthly'; render()">Monthly</button>
+    <button class="btn ${tab==='yearly'?'btn-primary':'btn-outline'} btn-sm" onclick="state.adminReportTab='yearly'; render()">Yearly</button>
+  </div>
+  <div class="panel" style="padding:0;">
+    <table><thead><tr><th>Period</th><th>Revenue</th><th>Orders</th><th>Avg. Order</th><th>New Customers</th><th>Returns</th><th></th></tr></thead>
+    <tbody>${list.length ? list.map(r=>`
+      <tr>
+        <td>${tab==='monthly' ? r.label : r.year}</td>
+        <td class="mono">${fmt(r.revenue)}</td>
+        <td class="mono">${r.orderCount}</td>
+        <td class="mono">${fmt(r.avgOrderValue)}</td>
+        <td class="mono">${r.newCustomers}</td>
+        <td class="mono">${r.returnsCount}</td>
+        <td><button class="btn-ghost" onclick="downloadReportPDF('${tab}','${tab==='monthly'?r.month:r.year}')">Download PDF</button></td>
+      </tr>`).join('') : `<tr><td colspan="7" style="text-align:center; color:var(--ink-dim); padding:24px;">No ${tab} reports yet — they appear once a ${tab==='monthly'?'month':'year'} has fully completed, or click "Generate Now" above.</td></tr>`}
+    </tbody></table>
+  </div>`;
+}
+async function generateReportsNow(){
+  try{
+    const result = await apiFetch('/reports/generate-now', {method:'POST'});
+    const mi = DB.monthlyReports.findIndex(r=>r.month===result.month.month);
+    if(mi>=0) DB.monthlyReports[mi]=result.month; else DB.monthlyReports.unshift(result.month);
+    const yi = DB.yearlyReports.findIndex(r=>r.year===result.year.year);
+    if(yi>=0) DB.yearlyReports[yi]=result.year; else DB.yearlyReports.unshift(result.year);
+    showToast('Current period snapshot saved');
+    render();
+  } catch(err){ showToast(err.message || 'Could not generate report'); }
+}
+function downloadReportPDF(type, key){
+  const list = type==='monthly' ? DB.monthlyReports : DB.yearlyReports;
+  const r = list.find(x => (type==='monthly' ? x.month : x.year) === key);
+  if(!r) return;
+  const fmtPdf = n => 'Rs. ' + new Intl.NumberFormat('en-IN', {maximumFractionDigits:0}).format(n);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const periodLabel = type==='monthly' ? r.label : r.year;
+  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(255,90,60);
+  doc.text('VANTURA', 14, 20);
+  doc.setTextColor(40,40,40); doc.setFontSize(11); doc.setFont('helvetica','normal');
+  doc.text((type==='monthly' ? 'Monthly' : 'Yearly') + ' Report — ' + periodLabel, 14, 28);
+  doc.setFontSize(9); doc.setTextColor(120,120,120);
+  doc.text('Generated: ' + new Date(r.generatedDate).toLocaleString('en-IN'), 14, 34);
+  doc.setDrawColor(255,90,60); doc.setLineWidth(0.8); doc.line(14,40,196,40);
+
+  doc.autoTable({
+    startY: 48,
+    head: [['Metric','Value']],
+    body: [
+      ['Revenue', fmtPdf(r.revenue)],
+      ['Orders', String(r.orderCount)],
+      ['Average Order Value', fmtPdf(r.avgOrderValue)],
+      ['New Customers', String(r.newCustomers)],
+      ['Return Requests', String(r.returnsCount)],
+    ],
+    theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3},
+  });
+
+  let y = doc.lastAutoTable.finalY + 12;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Top Products', 14, y); y += 4;
+  const topRows = (r.topProducts||[]).map(p=>[p.name, String(p.qty)]);
+  doc.autoTable({ startY:y, head:[['Product','Units Sold']], body: topRows.length?topRows:[['—','—']], theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3} });
+
+  y = doc.lastAutoTable.finalY + 12;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Revenue by Category', 14, y); y += 4;
+  const catRows = Object.entries(r.categoryRevenue||{}).map(([c,v])=>[c, fmtPdf(v)]);
+  doc.autoTable({ startY:y, head:[['Category','Revenue']], body: catRows.length?catRows:[['—','—']], theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3} });
+
+  doc.save('vantura-' + type + '-report-' + (type==='monthly'?r.month:r.year) + '.pdf');
+  showToast('Report PDF downloaded');
+}
+function downloadDashboardPDF(){
+  const orders = DB.orders;
+  const revenue = orders.reduce((s,o)=>s+o.total,0);
+  const avgOrder = orders.length ? revenue/orders.length : 0;
+  const catRevenue = {};
+  orders.forEach(o=>o.items.forEach(it=>{
+    const p = DB.products.find(pp=>pp.id===it.id);
+    const cat = p ? p.category : 'Other';
+    catRevenue[cat] = (catRevenue[cat]||0) + it.price*it.qty;
+  }));
+  const statuses = ['Processing','Shipped','Out for Delivery','Delivered','Cancelled'];
+  const fmtPdf = n => 'Rs. ' + new Intl.NumberFormat('en-IN', {maximumFractionDigits:0}).format(n);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(255,90,60);
+  doc.text('VANTURA', 14, 20);
+  doc.setTextColor(40,40,40); doc.setFontSize(11); doc.setFont('helvetica','normal');
+  doc.text('Store Dashboard Report', 14, 28);
+  doc.setFontSize(9); doc.setTextColor(120,120,120);
+  doc.text('Generated: ' + new Date().toLocaleString('en-IN'), 14, 34);
+  doc.setDrawColor(255,90,60); doc.setLineWidth(0.8); doc.line(14,40,196,40);
+
+  doc.autoTable({
+    startY: 48,
+    head: [['Metric','Value']],
+    body: [
+      ['Total Revenue', fmtPdf(revenue)],
+      ['Total Orders', String(orders.length)],
+      ['Average Order Value', fmtPdf(avgOrder)],
+      ['Total Customers', String(DB.customers.length)],
+      ['Products Listed', String(DB.products.length)],
+    ],
+    theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3},
+  });
+
+  let y = doc.lastAutoTable.finalY + 12;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Revenue by Category', 14, y); y += 4;
+  doc.autoTable({ startY:y, head:[['Category','Revenue']], body: Object.entries(catRevenue).map(([c,r])=>[c, fmtPdf(r)]), theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3} });
+
+  y = doc.lastAutoTable.finalY + 12;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Orders by Status', 14, y); y += 4;
+  doc.autoTable({ startY:y, head:[['Status','Orders']], body: statuses.map(s=>[s, String(orders.filter(o=>o.status===s).length)]), theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:9, cellPadding:3} });
+
+  y = doc.lastAutoTable.finalY + 12;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Recent Orders', 14, y); y += 4;
+  doc.autoTable({ startY:y, head:[['Order','Customer','Date','Total','Status']], body: orders.slice(0,15).map(o=>[o.id, o.customer.name, new Date(o.date).toLocaleDateString(), fmtPdf(o.total), o.status]), theme:'grid', headStyles:{fillColor:[33,44,34], textColor:255, fontSize:9}, styles:{fontSize:8, cellPadding:3} });
+
+  doc.save('vantura-dashboard-' + new Date().toISOString().slice(0,10) + '.pdf');
+  showToast('Dashboard PDF downloaded');
+}
+function openResetDataModal(){
+  state.modal = {type:'resetData', data:{password:''}};
+  render();
+}
+async function confirmResetData(){
+  const pw = state.modal.data.password;
+  if(!pw){ showToast('Enter the admin password to confirm'); return; }
+  try{
+    await apiFetch('/admin/reset-data', {method:'POST', body:JSON.stringify({password:pw})});
+    state.modal = null;
+    showToast('Store data reset — please log in again');
+    await adminLogout();
+  } catch(err){ showToast(err.message || 'Could not reset data'); }
+}
 async function restoreAdminAuth(){
   const token = localStorage.getItem('vantura_admin_token');
   const wasAdmin = localStorage.getItem('vantura_was_admin');
   if(!token || !wasAdmin) return;
   authToken = token;
   try{
-    const [orders, customers, collections, reviews, returns] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns;
+    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports;
     state.isAdmin = true;
     state.adminView = localStorage.getItem('vantura_admin_view') || 'dashboard';
     state.view = 'admin';
@@ -2011,6 +2171,7 @@ function adminSidebar(){
     ${item('announcement','Announcement Bar')}
     ${item('paymentnote','Payment Notes')}
     ${item('storeinfo','Store Info')}
+    ${item('reports','Reports')}
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
     <a href="#" onclick="event.preventDefault(); exportToExcel()" style="color:var(--gold);">⬇ Export to Excel</a>
     <div style="border-top:1px solid var(--line); margin:16px 0;"></div>
@@ -2073,6 +2234,10 @@ function adminDashboard(){
   };
 
   return `
+  <div class="toolbar">
+    <h2 style="font-size:22px;">Dashboard</h2>
+    <button class="btn btn-outline btn-sm" onclick="downloadDashboardPDF()">⬇ Save Dashboard as PDF</button>
+  </div>
   <div class="kpi-row">
     <div class="kpi"><span class="eyebrow">Total Revenue</span><div class="val">${fmt(revenue)}</div><div class="delta">${orders.length} orders lifetime</div></div>
     <div class="kpi"><span class="eyebrow">This Week Revenue</span><div class="val">${fmt(thisWeekRevenue)}</div><div class="delta">${growthBadge(revenueGrowth)} vs last week</div></div>
@@ -2118,6 +2283,11 @@ function adminDashboard(){
     <h3>Recent Orders</h3>
     <table><thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
     <tbody>${orders.slice(0,6).map(o=>`<tr><td class="mono">${o.id}</td><td>${o.customer.name}</td><td>${new Date(o.date).toLocaleDateString()}</td><td class="mono">${fmt(o.total)}</td><td><span class="status-pill status-${o.status.replace(/ /g,'-')}">${o.status}</span></td></tr>`).join('')}</tbody></table>
+  </div>
+  <div class="panel" style="border-color:var(--danger); margin-top:30px;">
+    <h3 style="color:var(--danger);">Danger Zone</h3>
+    <p style="font-size:12px; color:var(--ink-dim); margin:8px 0 14px;">This permanently erases every product, order, customer, review, coupon, and setting, resetting the store back to its original starter state. This cannot be undone.</p>
+    <button class="btn btn-danger btn-sm" onclick="openResetDataModal()">Reset All Store Data</button>
   </div>`;
 }
 
@@ -2558,7 +2728,7 @@ function adminCoupons(){
 
 function viewAdmin(){
   if(!state.isAdmin) return viewAdminLogin();
-  const map = {dashboard:adminDashboard, products:adminProducts, heroslides:adminHeroSlides, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, returns:adminReturns, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo};
+  const map = {dashboard:adminDashboard, products:adminProducts, heroslides:adminHeroSlides, bulkimport:adminBulkImport, collections:adminCollections, reviews:adminReviews, orders:adminOrders, returns:adminReturns, customers:adminCustomers, coupons:adminCoupons, scratch:adminScratchCards, announcement:adminAnnouncement, paymentnote:adminPaymentNote, storeinfo:adminStoreInfo, reports:adminReports};
   return `<div class="admin-shell">${adminSidebar()}<div class="admin-main">${map[state.adminView]()}</div></div>`;
 }
 

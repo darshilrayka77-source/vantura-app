@@ -75,6 +75,8 @@ const SEED = {
   reviews: [],
   returns: [],
   heroSlides: [],
+  monthlyReports: [],
+  yearlyReports: [],
 };
 
 /* ============================================================
@@ -197,6 +199,77 @@ function readBody(req){
 }
 const uid = (p) => p + '-' + crypto.randomBytes(4).toString('hex');
 const round2 = n => Math.round(n * 100) / 100;
+
+/* ============================================================
+   MONTHLY / YEARLY REPORTS
+   ------------------------------------------------------------
+   Reports are computed once and stored as independent snapshots
+   (not recalculated live), so they survive a "reset dashboard
+   data" action and stay accurate even if orders are later cleared.
+   Because Render's free tier can sleep for long stretches, we
+   don't rely on a precise midnight cron job — instead, every time
+   the server starts up, it "catches up" and generates a report
+   for any fully-completed month/year that doesn't have one yet.
+============================================================ */
+function computeReportForRange(startDate, endDate){
+  const orders = db.orders.filter(o => { const d = new Date(o.date); return d >= startDate && d < endDate; });
+  const revenue = orders.reduce((s,o)=>s+o.total,0);
+  const orderCount = orders.length;
+  const avgOrderValue = orderCount ? revenue / orderCount : 0;
+  const newCustomers = db.customers.filter(c => c.since && new Date(c.since) >= startDate && new Date(c.since) < endDate).length;
+  const productSales = {};
+  orders.forEach(o => o.items.forEach(it => { productSales[it.name] = (productSales[it.name]||0) + it.qty; }));
+  const topProducts = Object.entries(productSales).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([name,qty])=>({name,qty}));
+  const categoryRevenue = {};
+  orders.forEach(o => o.items.forEach(it => {
+    const p = db.products.find(pp=>pp.id===it.id);
+    const cat = p ? p.category : 'Other';
+    categoryRevenue[cat] = (categoryRevenue[cat]||0) + it.price*it.qty;
+  }));
+  const returnsCount = db.returns.filter(r => { const d = new Date(r.date); return d >= startDate && d < endDate; }).length;
+  return {
+    revenue: round2(revenue), orderCount, avgOrderValue: round2(avgOrderValue), newCustomers,
+    topProducts, categoryRevenue, returnsCount,
+  };
+}
+const monthKey = (y,m) => `${y}-${String(m+1).padStart(2,'0')}`;
+const monthLabel = (y,m) => new Date(y,m,1).toLocaleDateString('en-IN', {month:'long', year:'numeric'});
+
+async function generateMissingReports(){
+  if(!db.orders.length) return; // nothing to report on yet
+  const now = new Date();
+  const earliestDate = new Date(Math.min(...db.orders.map(o=>new Date(o.date).getTime())));
+  let changed = false;
+
+  // Monthly — walk from the earliest order's month up to (not including) the current month
+  let cursor = new Date(earliestDate.getFullYear(), earliestDate.getMonth(), 1);
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  while(cursor < currentMonthStart){
+    const key = monthKey(cursor.getFullYear(), cursor.getMonth());
+    if(!db.monthlyReports.find(r => r.month === key)){
+      const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth()+1, 1);
+      const data = computeReportForRange(cursor, nextMonth);
+      db.monthlyReports.push({id: uid('MR'), month: key, label: monthLabel(cursor.getFullYear(), cursor.getMonth()), generatedDate: new Date().toISOString(), ...data});
+      changed = true;
+    }
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth()+1, 1);
+  }
+
+  // Yearly — walk from the earliest order's year up to (not including) the current year
+  let yCursor = earliestDate.getFullYear();
+  const currentYear = now.getFullYear();
+  while(yCursor < currentYear){
+    const key = String(yCursor);
+    if(!db.yearlyReports.find(r => r.year === key)){
+      const data = computeReportForRange(new Date(yCursor,0,1), new Date(yCursor+1,0,1));
+      db.yearlyReports.push({id: uid('YR'), year: key, generatedDate: new Date().toISOString(), ...data});
+      changed = true;
+    }
+    yCursor++;
+  }
+
+  if(changed) await saveDb();
+}
 
 function calcTotals(items, couponCode){
   let subtotal = 0;
@@ -844,6 +917,55 @@ const server = http.createServer(async (req, res) => {
       if(token) sessions.delete(token);
       return send(res, 200, {loggedOut:true});
     }
+    if(pathname === '/api/admin/reset-data' && req.method === 'POST'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const body = await readBody(req);
+      if(body.password !== ADMIN_PASSWORD){
+        return send(res, 401, {message:'Incorrect password — data was not reset'});
+      }
+      // Scoped to dashboard/transactional data only — product catalog, collections,
+      // coupons, and store settings are left untouched since resetting those
+      // wasn't asked for and would be far more destructive than intended.
+      db.orders = [];
+      db.customers = [];
+      db.returns = [];
+      await saveDb();
+      return send(res, 200, {reset:true});
+    }
+
+    /* ---------- REPORTS (monthly / yearly — stored snapshots, survive a dashboard reset) ---------- */
+    if(pathname === '/api/reports/monthly' && req.method === 'GET'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      return send(res, 200, (db.monthlyReports || []).slice().sort((a,b)=> b.month.localeCompare(a.month)));
+    }
+    if(pathname === '/api/reports/yearly' && req.method === 'GET'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      return send(res, 200, (db.yearlyReports || []).slice().sort((a,b)=> b.year.localeCompare(a.year)));
+    }
+    if(pathname === '/api/reports/generate-now' && req.method === 'POST'){
+      // lets the admin snapshot the current (still in-progress) month/year immediately,
+      // instead of waiting for the month to fully end
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      const now = new Date();
+      const mStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const mEnd = new Date(now.getFullYear(), now.getMonth()+1, 1);
+      const mKey = monthKey(now.getFullYear(), now.getMonth());
+      const mData = computeReportForRange(mStart, mEnd);
+      const existingM = db.monthlyReports.findIndex(r=>r.month===mKey);
+      const monthReport = {id: existingM>=0?db.monthlyReports[existingM].id:uid('MR'), month:mKey, label: monthLabel(now.getFullYear(), now.getMonth()) + ' (in progress)', generatedDate: new Date().toISOString(), ...mData};
+      if(existingM>=0) db.monthlyReports[existingM] = monthReport; else db.monthlyReports.push(monthReport);
+
+      const yStart = new Date(now.getFullYear(), 0, 1);
+      const yEnd = new Date(now.getFullYear()+1, 0, 1);
+      const yKey = String(now.getFullYear());
+      const yData = computeReportForRange(yStart, yEnd);
+      const existingY = db.yearlyReports.findIndex(r=>r.year===yKey);
+      const yearReport = {id: existingY>=0?db.yearlyReports[existingY].id:uid('YR'), year:yKey, generatedDate: new Date().toISOString(), ...yData};
+      if(existingY>=0) db.yearlyReports[existingY] = yearReport; else db.yearlyReports.push(yearReport);
+
+      await saveDb();
+      return send(res, 200, {month: monthReport, year: yearReport});
+    }
 
     if(pathname === '/api/health') return send(res, 200, {ok:true, time:new Date().toISOString()});
 
@@ -861,6 +983,11 @@ async function start(){
   } catch(err){
     console.error('\n✗ Could not connect to MongoDB Atlas. Check your MONGODB_URI value.\n', err.message, '\n');
     process.exit(1);
+  }
+  try{
+    await generateMissingReports();
+  } catch(err){
+    console.error('Could not generate monthly/yearly reports:', err.message);
   }
   server.listen(PORT, () => {
     console.log(`\n  VANTURA backend running →  http://localhost:${PORT}`);

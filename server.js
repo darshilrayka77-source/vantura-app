@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const ADMIN_PASSWORD = 'admin123'; // change this for real use
+const ADMIN_PASSWORD = '@vantu1122006'; // change this for real use
 
 /* ============================================================
    SEED DATA — used only the very first time the server runs

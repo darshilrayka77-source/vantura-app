@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 4000;
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const ADMIN_PASSWORD = '@vantu1122006'; // change this for real use
+const ADMIN_PASSWORD = 'admin123'; // change this for real use
 
 /* ============================================================
    SEED DATA — used only the very first time the server runs
@@ -323,6 +323,95 @@ async function razorpayRequest(path, method, body){
 }
 
 // shared by both Cash on Delivery (direct) and Razorpay (after payment is verified)
+/* ============================================================
+   EMAIL NOTIFICATIONS
+   ------------------------------------------------------------
+   Uses Resend (https://resend.com) — a transactional email API
+   with a permanent free tier (3,000 emails/month, no credit card).
+   No SDK needed — just a plain HTTPS call via fetch.
+
+   Set these environment variables to activate it:
+     RESEND_API_KEY   — from resend.com → API Keys
+     EMAIL_FROM       — e.g. "Vantura <orders@yourdomain.com>"
+                        (until you verify your own domain with
+                        Resend, this must stay as their test
+                        address: "Vantura <onboarding@resend.dev>",
+                        which can only deliver to the email you
+                        signed up to Resend with — fine for testing,
+                        but you'll need a verified domain before
+                        real customers can receive these emails)
+
+   If RESEND_API_KEY isn't set, emails are silently skipped (logged
+   to the console) so the rest of the app keeps working normally.
+============================================================ */
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const EMAIL_FROM = process.env.EMAIL_FROM || 'Vantura <onboarding@resend.dev>';
+
+async function sendEmail(to, subject, html){
+  if(!RESEND_API_KEY){
+    console.log(`(email skipped — RESEND_API_KEY not set) "${subject}" → ${to}`);
+    return;
+  }
+  try{
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json'},
+      body: JSON.stringify({from: EMAIL_FROM, to, subject, html}),
+    });
+    if(!res.ok){
+      console.error('Email send failed:', res.status, await res.text());
+    }
+  } catch(err){
+    console.error('Email send error:', err.message);
+  }
+}
+
+function emailShell(innerHtml){
+  return `<div style="font-family:Arial,Helvetica,sans-serif; max-width:520px; margin:0 auto; color:#222;">
+    <div style="background:#101114; padding:22px; text-align:center;">
+      <span style="color:#FF5A3C; font-size:20px; font-weight:bold; letter-spacing:1px;">VANTURA</span>
+    </div>
+    <div style="padding:24px; border:1px solid #eee; border-top:0;">${innerHtml}</div>
+    <p style="text-align:center; font-size:12px; color:#999; padding:16px;">© ${new Date().getFullYear()} Vantura. This is an automated message.</p>
+  </div>`;
+}
+function fmtRs(n){ return 'Rs. ' + Number(n).toLocaleString('en-IN', {maximumFractionDigits:0}); }
+
+function orderConfirmationEmail(order){
+  const rows = order.items.map(it => `<tr><td style="padding:8px 0; border-bottom:1px solid #f0f0f0;">${it.name}${it.variant?` (${it.variant})`:''} × ${it.qty}</td><td style="padding:8px 0; border-bottom:1px solid #f0f0f0; text-align:right;">${fmtRs(it.price*it.qty)}</td></tr>`).join('');
+  return emailShell(`
+    <h2 style="margin-top:0;">Thanks for your order, ${order.customer.name}!</h2>
+    <p>Your order <strong>${order.id}</strong> has been placed successfully and is now being processed.</p>
+    <table style="width:100%; border-collapse:collapse; margin:18px 0; font-size:14px;">${rows}</table>
+    <table style="width:100%; font-size:14px;">
+      <tr><td style="padding:3px 0;">Subtotal</td><td style="text-align:right;">${fmtRs(order.subtotal)}</td></tr>
+      <tr><td style="padding:3px 0;">Discount</td><td style="text-align:right;">- ${fmtRs(order.discount)}</td></tr>
+      <tr><td style="padding:3px 0;">Shipping</td><td style="text-align:right;">${order.shipping===0?'Free':fmtRs(order.shipping)}</td></tr>
+      <tr><td style="padding:3px 0;">GST</td><td style="text-align:right;">${fmtRs(order.tax)}</td></tr>
+      <tr style="font-weight:bold; font-size:16px;"><td style="padding-top:8px; border-top:2px solid #222;">Total</td><td style="text-align:right; padding-top:8px; border-top:2px solid #222;">${fmtRs(order.total)}</td></tr>
+    </table>
+    <p style="margin-top:20px; font-size:13px; color:#666;"><strong>Shipping to:</strong><br>${order.address.line1}, ${order.address.city}, ${order.address.state} ${order.address.zip}</p>
+    <p style="font-size:13px; color:#666;"><strong>Payment method:</strong> ${order.payment}</p>
+  `);
+}
+function orderStatusEmail(order){
+  return emailShell(`
+    <h2 style="margin-top:0;">Order update: ${order.status}</h2>
+    <p>Hi ${order.customer.name}, here's the latest on your order <strong>${order.id}</strong>.</p>
+    <p style="font-size:16px; margin:20px 0;">Status: <strong style="color:#FF5A3C;">${order.status}</strong></p>
+    <p style="font-size:13px; color:#666;">You can track this order anytime on our website under "Track Order" using this email address.</p>
+  `);
+}
+function returnStatusEmail(ret){
+  return emailShell(`
+    <h2 style="margin-top:0;">Return update: ${ret.status}</h2>
+    <p>Hi ${ret.customerName}, your return request for order <strong>${ret.orderId}</strong> has been updated.</p>
+    <p style="font-size:16px; margin:20px 0;">Status: <strong style="color:#FF5A3C;">${ret.status}</strong></p>
+    ${ret.status === 'Refunded' ? `<p style="font-size:14px;">Refund amount: <strong>${fmtRs(ret.refundAmount)}</strong> via ${ret.refundMethod}.</p>` : ''}
+    <p style="font-size:13px; color:#666;">Questions? Reach out through our Contact Us page.</p>
+  `);
+}
+
 function createOrderRecord(body, paymentInfo){
   const totals = calcTotals(body.items, body.couponCode);
   let customer = db.customers.find(c => c.email === body.customer.email);
@@ -348,6 +437,7 @@ function createOrderRecord(body, paymentInfo){
     if(p) p.stock = Math.max(0, p.stock - it.qty);
   });
   db.orders.unshift(order);
+  sendEmail(order.customer.email, `Order Confirmed — ${order.id}`, orderConfirmationEmail(order));
   return order;
 }
 
@@ -611,6 +701,10 @@ const server = http.createServer(async (req, res) => {
     if(pathname === '/api/payments/status' && req.method === 'GET'){
       return send(res, 200, {enabled: !!(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET)});
     }
+    if(pathname === '/api/email/status' && req.method === 'GET'){
+      if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
+      return send(res, 200, {enabled: !!RESEND_API_KEY, from: EMAIL_FROM});
+    }
     if(pathname === '/api/payments/create' && req.method === 'POST'){
       if(!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET){
         return send(res, 503, {message:'Online payments are not set up yet — please use Cash on Delivery.'});
@@ -660,7 +754,10 @@ const server = http.createServer(async (req, res) => {
       const order = db.orders.find(o => o.id === parts[2]);
       if(!order) return send(res, 404, {message:'Order not found'});
       const body = await readBody(req);
-      if(body.status) order.status = body.status;
+      if(body.status && body.status !== order.status){
+        order.status = body.status;
+        sendEmail(order.customer.email, `Order Update — ${order.id} is now "${order.status}"`, orderStatusEmail(order));
+      }
       await saveDb();
       return send(res, 200, order);
     }
@@ -753,7 +850,10 @@ const server = http.createServer(async (req, res) => {
       if(body.status === 'Refunded'){
         return send(res, 400, {message:'Use the refund action to mark a return as refunded'});
       }
-      if(body.status) ret.status = body.status;
+      if(body.status && body.status !== ret.status){
+        ret.status = body.status;
+        sendEmail(ret.customerEmail, `Return Update — ${ret.orderId} is now "${ret.status}"`, returnStatusEmail(ret));
+      }
       await saveDb();
       return send(res, 200, ret);
     }
@@ -787,6 +887,7 @@ const server = http.createServer(async (req, res) => {
         ret.refundDate = new Date().toISOString();
       }
       await saveDb();
+      sendEmail(ret.customerEmail, `Refund Processed — ${ret.orderId}`, returnStatusEmail(ret));
       return send(res, 200, ret);
     }
 

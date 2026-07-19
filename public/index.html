@@ -297,6 +297,7 @@ const DB = {
   heroSlides: [],
   monthlyReports: [],
   yearlyReports: [],
+  emailStatus: {enabled:false},
   announcement: {text:'', active:false},
   paymentNotes: {},
   storeInfo: {},
@@ -1976,8 +1977,8 @@ async function adminLogin(){
     state.isAdmin = true;
     localStorage.setItem('vantura_admin_token', data.token);
     localStorage.setItem('vantura_was_admin', 'true');
-    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports;
+    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports, emailStatus] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly'), apiFetch('/email/status')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports; DB.emailStatus = emailStatus;
     nav('admin');
   } catch(err){ showToast(err.message || 'Incorrect password'); }
 }
@@ -2140,8 +2141,8 @@ async function restoreAdminAuth(){
   if(!token || !wasAdmin) return;
   authToken = token;
   try{
-    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly')]);
-    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports;
+    const [orders, customers, collections, reviews, returns, monthlyReports, yearlyReports, emailStatus] = await Promise.all([apiFetch('/orders'), apiFetch('/customers'), apiFetch('/collections'), apiFetch('/reviews'), apiFetch('/returns'), apiFetch('/reports/monthly'), apiFetch('/reports/yearly'), apiFetch('/email/status')]);
+    DB.orders = orders; DB.customers = customers; DB.collections = collections; DB.reviews = reviews; DB.returns = returns; DB.monthlyReports = monthlyReports; DB.yearlyReports = yearlyReports; DB.emailStatus = emailStatus;
     state.isAdmin = true;
     state.adminView = localStorage.getItem('vantura_admin_view') || 'dashboard';
     state.view = 'admin';
@@ -2647,7 +2648,15 @@ async function deleteHeroSlide(id){
 
 function adminStoreInfo(){
   const s = DB.storeInfo || {};
+  const email = DB.emailStatus || {enabled:false};
   return `<div class="toolbar"><h2 style="font-size:22px;">Store Info</h2></div>
+  <div class="panel" style="max-width:520px; margin-bottom:18px;">
+    <h3 style="font-size:14px; margin-bottom:8px;">Email Notifications</h3>
+    ${email.enabled
+      ? `<p style="font-size:13px; color:var(--ok);">✓ Active — sending from ${email.from}</p>`
+      : `<p style="font-size:13px; color:var(--gold);">⚠ Not configured — customers won't get order/return emails yet.</p>
+         <p style="font-size:12px; color:var(--ink-dim); margin-top:8px;">Set <span class="mono">RESEND_API_KEY</span> (and optionally <span class="mono">EMAIL_FROM</span>) as environment variables on Render to turn this on. Free at resend.com, no credit card.</p>`}
+  </div>
   <p style="color:var(--ink-dim); font-size:13px; margin-bottom:16px; max-width:600px;">These details show up on the Contact Us page, Customer Care, and shipping/returns policy.</p>
   <div class="panel" style="max-width:520px;">
     <div class="field"><label>Support Email</label><input type="email" id="storeSupportEmail" value="${s.supportEmail||''}"></div>

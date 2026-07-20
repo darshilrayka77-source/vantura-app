@@ -326,30 +326,54 @@ async function razorpayRequest(path, method, body){
 /* ============================================================
    EMAIL NOTIFICATIONS
    ------------------------------------------------------------
-   Uses Resend (https://resend.com) — a transactional email API
-   with a permanent free tier (3,000 emails/month, no credit card).
-   No SDK needed — just a plain HTTPS call via fetch.
+   Two ways to send email — set up whichever is easier for you:
 
-   Set these environment variables to activate it:
+   OPTION A — Gmail (works immediately, no domain needed)
+     GMAIL_USER          — your Gmail address, e.g. yourstore@gmail.com
+     GMAIL_APP_PASSWORD  — a 16-character App Password (NOT your
+                            normal Gmail password) — generate one at
+                            myaccount.google.com/apppasswords
+                            (requires 2-Step Verification to be on)
+     Can send to ANY customer email right away. Gmail caps free
+     accounts at ~500 emails/day, which is plenty for a small store.
+
+   OPTION B — Resend (needs a verified domain to email real customers)
      RESEND_API_KEY   — from resend.com → API Keys
      EMAIL_FROM       — e.g. "Vantura <orders@yourdomain.com>"
-                        (until you verify your own domain with
-                        Resend, this must stay as their test
-                        address: "Vantura <onboarding@resend.dev>",
-                        which can only deliver to the email you
-                        signed up to Resend with — fine for testing,
-                        but you'll need a verified domain before
-                        real customers can receive these emails)
 
-   If RESEND_API_KEY isn't set, emails are silently skipped (logged
-   to the console) so the rest of the app keeps working normally.
+   If GMAIL_USER + GMAIL_APP_PASSWORD are set, Gmail is used. Otherwise,
+   if RESEND_API_KEY is set, Resend is used. If neither is set, emails
+   are silently skipped (logged to the console) so the rest of the
+   app keeps working normally.
 ============================================================ */
+const GMAIL_USER = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const EMAIL_FROM = process.env.EMAIL_FROM || 'Vantura <onboarding@resend.dev>';
+const EMAIL_FROM = process.env.EMAIL_FROM || (GMAIL_USER ? `Vantura <${GMAIL_USER}>` : 'Vantura <onboarding@resend.dev>');
+
+let gmailTransporter = null;
+function getGmailTransporter(){
+  if(!gmailTransporter){
+    const nodemailer = require('nodemailer'); // only loaded if Gmail is actually configured
+    gmailTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {user: GMAIL_USER, pass: GMAIL_APP_PASSWORD},
+    });
+  }
+  return gmailTransporter;
+}
 
 async function sendEmail(to, subject, html){
+  if(GMAIL_USER && GMAIL_APP_PASSWORD){
+    try{
+      await getGmailTransporter().sendMail({from: EMAIL_FROM, to, subject, html});
+    } catch(err){
+      console.error('Gmail send error:', err.message);
+    }
+    return;
+  }
   if(!RESEND_API_KEY){
-    console.log(`(email skipped — RESEND_API_KEY not set) "${subject}" → ${to}`);
+    console.log(`(email skipped — no email provider configured) "${subject}" → ${to}`);
     return;
   }
   try{
@@ -703,7 +727,9 @@ const server = http.createServer(async (req, res) => {
     }
     if(pathname === '/api/email/status' && req.method === 'GET'){
       if(!isAuthed(req)) return send(res, 401, {message:'Admin login required'});
-      return send(res, 200, {enabled: !!RESEND_API_KEY, from: EMAIL_FROM});
+      const gmailReady = !!(GMAIL_USER && GMAIL_APP_PASSWORD);
+      const provider = gmailReady ? 'Gmail' : (RESEND_API_KEY ? 'Resend' : 'none');
+      return send(res, 200, {enabled: gmailReady || !!RESEND_API_KEY, from: EMAIL_FROM, provider});
     }
     if(pathname === '/api/payments/create' && req.method === 'POST'){
       if(!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET){

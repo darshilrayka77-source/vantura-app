@@ -387,6 +387,10 @@ const state = {
   customer:null,     // {name, email, phone}
   accountMode:'login',
   accountForm:{name:'', email:'', password:''},
+  forgotPasswordEmail:'',
+  forgotPasswordSent:false,
+  resetToken:null,
+  resetPasswordForm:{password:'', confirm:''},
   myAccountOrders:[],
   myAccountOrdersLoading:false,
   productReviews:[],
@@ -615,6 +619,27 @@ async function customerLogin(){
     showToast('Welcome back, ' + data.customer.name);
     nav('account');
   } catch(err){ showToast(err.message || 'Could not log in'); }
+}
+async function submitForgotPassword(){
+  if(!state.forgotPasswordEmail){ showToast('Enter your email address'); return; }
+  try{
+    await apiFetch('/auth/forgot-password', {method:'POST', body:JSON.stringify({email: state.forgotPasswordEmail})});
+    state.forgotPasswordSent = true;
+    render();
+  } catch(err){ showToast(err.message || 'Could not send reset email'); }
+}
+async function submitResetPassword(){
+  const f = state.resetPasswordForm;
+  if(!f.password || f.password.length < 6){ showToast('Password must be at least 6 characters'); return; }
+  if(f.password !== f.confirm){ showToast('Passwords do not match'); return; }
+  try{
+    await apiFetch('/auth/reset-password', {method:'POST', body:JSON.stringify({token: state.resetToken, newPassword: f.password})});
+    showToast('Password updated — please log in');
+    state.resetToken = null;
+    state.resetPasswordForm = {password:'', confirm:''};
+    state.accountMode = 'login';
+    nav('account');
+  } catch(err){ showToast(err.message || 'Could not reset password'); }
 }
 async function customerLogout(){
   try{ await customerFetch('/auth/logout', {method:'POST'}); } catch(e){}
@@ -1899,6 +1924,24 @@ function viewMyOrders(){
   </section>`;
 }
 
+function viewResetPassword(){
+  if(!state.resetToken){
+    return `<section class="section wrap" style="max-width:420px; text-align:center; padding-top:60px;">
+      <h2 style="font-size:22px; margin-bottom:12px;">Invalid Reset Link</h2>
+      <p style="color:var(--ink-dim); margin-bottom:20px;">This password reset link is missing or invalid.</p>
+      <button class="btn btn-primary" onclick="state.accountMode='forgot'; nav('account')">Request a New Link</button>
+    </section>`;
+  }
+  const f = state.resetPasswordForm;
+  return `<section class="section wrap" style="max-width:420px;">
+    <div class="section-head"><h2>Set a New Password</h2></div>
+    <div class="panel">
+      <div class="field"><label>New Password</label><div style="position:relative;"><input type="password" style="padding-right:64px;" value="${f.password}" oninput="state.resetPasswordForm.password=this.value"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>
+      <div class="field"><label>Confirm Password</label><div style="position:relative;"><input type="password" style="padding-right:64px;" value="${f.confirm}" oninput="state.resetPasswordForm.confirm=this.value" onkeydown="if(event.key==='Enter') submitResetPassword()"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>
+      <button class="btn btn-primary" style="width:100%; margin-top:10px;" onclick="submitResetPassword()">Update Password</button>
+    </div>
+  </section>`;
+}
 function viewAccount(){
   if(state.customer){
     const orders = [...(state.myAccountOrders || [])].sort((a,b) => new Date(b.date) - new Date(a.date));
@@ -1938,6 +1981,22 @@ function viewAccount(){
   }
   const f = state.accountForm;
   const mode = state.accountMode;
+  if(mode === 'forgot'){
+    return `<section class="section wrap" style="max-width:420px;">
+      <div class="section-head"><h2>Reset Password</h2></div>
+      <div class="panel">
+        ${state.forgotPasswordSent ? `
+          <p style="font-size:14px; color:var(--ink-dim);">If an account exists for <strong style="color:var(--ink);">${state.forgotPasswordEmail}</strong>, we've sent a password reset link to that email. It expires in 1 hour.</p>
+          <button class="btn btn-outline" style="width:100%; margin-top:16px;" onclick="state.accountMode='login'; state.forgotPasswordSent=false; render()">Back to Log In</button>
+        ` : `
+          <p style="font-size:13px; color:var(--ink-dim); margin-bottom:14px;">Enter the email on your account and we'll send you a link to reset your password.</p>
+          <div class="field"><label>Email</label><input type="email" value="${state.forgotPasswordEmail}" oninput="state.forgotPasswordEmail=this.value" onkeydown="if(event.key==='Enter') submitForgotPassword()"></div>
+          <button class="btn btn-primary" style="width:100%; margin-top:6px;" onclick="submitForgotPassword()">Send Reset Link</button>
+          <p style="font-size:12px; color:var(--ink-dim); margin-top:16px; text-align:center;"><a href="#" style="color:var(--accent);" onclick="event.preventDefault(); state.accountMode='login'; render()">← Back to Log In</a></p>
+        `}
+      </div>
+    </section>`;
+  }
   const field = (label,key,type='text') => type==='password'
     ? `<div class="field"><label>${label}</label><div style="position:relative;"><input type="password" id="pwField_${key}" style="padding-right:64px;" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"><button type="button" onclick="togglePasswordVisibility(this)" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:0; color:var(--ink-dim); font-size:11px; cursor:pointer; text-transform:uppercase; letter-spacing:.04em;">Show</button></div></div>`
     : `<div class="field"><label>${label}</label><input type="${type}" value="${f[key]}" oninput="state.accountForm.${key}=this.value" onkeydown="if(event.key==='Enter'){ ${mode==='signup'?'customerSignup()':'customerLogin()'} }"></div>`;
@@ -1948,6 +2007,7 @@ function viewAccount(){
       ${field('Email','email','email')}
       ${field('Password','password','password')}
       <button class="btn btn-primary" style="width:100%; margin-top:6px;" onclick="${mode==='signup'?'customerSignup()':'customerLogin()'}">${mode==='signup' ? 'Create Account' : 'Log In'}</button>
+      ${mode==='login' ? `<p style="font-size:12px; text-align:center; margin-top:10px;"><a href="#" style="color:var(--ink-dim);" onclick="event.preventDefault(); state.accountMode='forgot'; render()">Forgot password?</a></p>` : ''}
       <p style="font-size:12px; color:var(--ink-dim); margin-top:16px; text-align:center;">
         ${mode==='signup'
           ? `Already have an account? <a href="#" style="color:var(--accent);" onclick="event.preventDefault(); state.accountMode='login'; render()">Log in</a>`
@@ -2895,6 +2955,7 @@ function render(){
     cart:viewCart, checkout:viewCheckout, confirmation:viewConfirmation, orders:viewOrders,
     account:viewAccount, wishlist:viewWishlist, myorders:viewMyOrders,
     contact:viewContact, privacy:viewPrivacy, customercare:viewCustomerCare, shippingreturns:viewShippingReturns,
+    'reset-password':viewResetPassword,
     'admin-login':viewAdminLogin, admin:viewAdmin,
   };
   const isAdminChrome = state.view==='admin' || (state.view==='admin-login');
@@ -2914,6 +2975,18 @@ function render(){
 restoreCart();
 restoreWishlist();
 restoreAuth();
+(function checkForResetLink(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('reset');
+    if(token){
+      state.resetToken = token;
+      state.view = 'reset-password';
+      // clean the token out of the visible URL so it isn't sitting in browser history/screenshots
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }catch(e){}
+})();
 loadCatalog();
 refreshCartFromServer();
 refreshWishlistFromServer();

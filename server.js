@@ -149,6 +149,8 @@ function isAuthed(req){
 
 // customer account sessions: token -> customer email
 const customerSessions = new Map();
+// password reset tokens: token -> {email, expires}
+const resetTokens = new Map();
 function getCustomerFromReq(req){
   const h = req.headers['authorization'] || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
@@ -433,6 +435,17 @@ function returnStatusEmail(ret){
     <p style="font-size:16px; margin:20px 0;">Status: <strong style="color:#FF5A3C;">${ret.status}</strong></p>
     ${ret.status === 'Refunded' ? `<p style="font-size:14px;">Refund amount: <strong>${fmtRs(ret.refundAmount)}</strong> via ${ret.refundMethod}.</p>` : ''}
     <p style="font-size:13px; color:#666;">Questions? Reach out through our Contact Us page.</p>
+  `);
+}
+function resetPasswordEmail(name, resetLink){
+  return emailShell(`
+    <h2 style="margin-top:0;">Reset your password</h2>
+    <p>Hi ${name}, we got a request to reset your Vantura account password.</p>
+    <p style="margin:24px 0; text-align:center;">
+      <a href="${resetLink}" style="background:#FF5A3C; color:#2B0900; text-decoration:none; padding:12px 28px; border-radius:4px; font-weight:bold; display:inline-block;">Reset Password</a>
+    </p>
+    <p style="font-size:13px; color:#666;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email — your password will stay the same.</p>
+    <p style="font-size:12px; color:#999; word-break:break-all;">Or copy this link: ${resetLink}</p>
   `);
 }
 
@@ -959,6 +972,42 @@ const server = http.createServer(async (req, res) => {
       const token = h.startsWith('Bearer ') ? h.slice(7) : null;
       if(token) customerSessions.delete(token);
       return send(res, 200, {loggedOut:true});
+    }
+    if(pathname === '/api/auth/forgot-password' && req.method === 'POST'){
+      const body = await readBody(req);
+      if(!body.email) return send(res, 400, {message:'Email is required'});
+      const customer = db.customers.find(c => c.email.toLowerCase() === body.email.toLowerCase() && c.passwordHash);
+      // always respond the same way whether or not the account exists, so this
+      // endpoint can't be used to check which emails have accounts
+      if(customer){
+        const token = crypto.randomBytes(24).toString('hex');
+        resetTokens.set(token, {email: customer.email, expires: Date.now() + 60*60*1000}); // 1 hour
+        const proto = (req.headers['x-forwarded-proto'] || 'https');
+        const host = req.headers.host;
+        const resetLink = `${proto}://${host}/?reset=${token}`;
+        sendEmail(customer.email, 'Reset your Vantura password', resetPasswordEmail(customer.name, resetLink))
+          .catch(err => console.error('Reset email failed:', err.message));
+      }
+      return send(res, 200, {message:'If an account exists for that email, a reset link has been sent.'});
+    }
+    if(pathname === '/api/auth/reset-password' && req.method === 'POST'){
+      const body = await readBody(req);
+      if(!body.token || !body.newPassword) return send(res, 400, {message:'Reset token and new password are required'});
+      const entry = resetTokens.get(body.token);
+      if(!entry || entry.expires < Date.now()){
+        resetTokens.delete(body.token);
+        return send(res, 400, {message:'This reset link is invalid or has expired. Please request a new one.'});
+      }
+      if(body.newPassword.length < 6) return send(res, 400, {message:'New password must be at least 6 characters'});
+      const customer = db.customers.find(c => c.email === entry.email);
+      if(!customer) return send(res, 404, {message:'Account not found'});
+      const {salt, hash} = hashPassword(body.newPassword);
+      customer.salt = salt; customer.passwordHash = hash;
+      resetTokens.delete(body.token);
+      // sign the customer out everywhere else, since their password just changed
+      for(const [tok, email] of customerSessions){ if(email === customer.email) customerSessions.delete(tok); }
+      await saveDb();
+      return send(res, 200, {message:'Password updated — you can now log in with your new password.'});
     }
     if(pathname === '/api/auth/me' && req.method === 'GET'){
       const customer = getCustomerFromReq(req);

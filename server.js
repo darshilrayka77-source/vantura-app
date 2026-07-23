@@ -356,17 +356,12 @@ const EMAIL_FROM = process.env.EMAIL_FROM || (GMAIL_USER ? `Vantura <${GMAIL_USE
 let gmailTransporter = null;
 function getGmailTransporter(){
   if(!gmailTransporter){
-    const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+   const nodemailer = require('nodemailer');// only loaded if Gmail is actually configured 
+   gmailTransporter = nodemailer.createTransport({
+   service: 'gmail',
+   auth: {user: GMAIL_USER, pass: GMAIL_APP_PASSWORD},
+   }); 
+}
   return gmailTransporter;
 }
 
